@@ -624,12 +624,12 @@ async function prefillProposal() {
 
 async function generateViaCodex() {
   if (!state.review) {
-    throw new Error("Generate a review first so Codex has grounded job context.");
+    throw new Error("Generate a review first so the AI call has grounded job context.");
   }
-  logStatus("Sending the current review to Codex CLI for grounded proposal generation.");
+  logStatus("Sending the current review to the local ChatGPT API for grounded proposal generation.");
   setButtonBusy(els.generateCodex, true, "Generating...");
   try {
-    const data = await api("/api/proposal/generate-codex", {
+    const data = await api("/api/proposal/generate-ai", {
       method: "POST",
       body: JSON.stringify({
         provider: state.provider,
@@ -638,7 +638,7 @@ async function generateViaCodex() {
     });
     renderReview(data.review);
     const summary = data.generator?.summary ? ` ${data.generator.summary}` : "";
-    logStatus(`Codex draft loaded.${summary}`);
+    logStatus(`AI draft loaded.${summary}`);
   } finally {
     setButtonBusy(els.generateCodex, false);
     updateCapabilityState();

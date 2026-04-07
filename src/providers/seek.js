@@ -1105,11 +1105,11 @@ async function submitPreparedApplications(applications, profile, options = {}) {
           if (typeof options.answerQuestion === "function") {
             const llmAnswer = await options.answerQuestion(field, review, profile);
             if (llmAnswer && llmAnswer.confidence === "high") {
-              answers.push({ ...field, answer: llmAnswer.answer, source: "codex-cli" });
+              answers.push({ ...field, answer: llmAnswer.answer, source: "chatgpt-api" });
               continue;
             }
             if (llmAnswer && llmAnswer.confidence === "medium" && field.required !== true) {
-              answers.push({ ...field, answer: llmAnswer.answer, source: "codex-cli" });
+              answers.push({ ...field, answer: llmAnswer.answer, source: "chatgpt-api" });
               continue;
             }
           }

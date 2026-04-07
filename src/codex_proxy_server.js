@@ -108,7 +108,7 @@ function createServer() {
 if (require.main === module) {
   const port = Number(process.env.CODEX_PROXY_PORT || DEFAULT_PORT);
   createServer().listen(port, () => {
-    console.log(`Codex proxy running at http://127.0.0.1:${port}`);
+    console.log(`AI proxy running at http://127.0.0.1:${port}`);
   });
 }
 

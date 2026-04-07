@@ -180,7 +180,7 @@ function createPortalMockServer() {
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/api/proposal/generate-codex") {
+    if (request.method === "POST" && (url.pathname === "/api/proposal/generate-ai" || url.pathname === "/api/proposal/generate-codex")) {
       await new Promise((resolve) => setTimeout(resolve, 250));
       response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       response.end(JSON.stringify(state.generatedCodex));
@@ -304,7 +304,7 @@ test("generate review and codex flow updates the proposal desk", { timeout: TEST
     assert.match(await page.textContent("#fit-score"), /78\/100/);
 
     const codexPromise = page.waitForResponse((response) =>
-      response.url().includes("/api/proposal/generate-codex") && response.status() === 200
+      response.url().includes("/api/proposal/generate-ai") && response.status() === 200
     , { timeout: 10000 });
     await page.click("#generate-codex");
 
@@ -320,7 +320,7 @@ test("generate review and codex flow updates the proposal desk", { timeout: TEST
     assert.match(await page.inputValue("#proposal-text"), /Codex-generated proposal text/);
     assert.match(await page.inputValue("#screening-text"), /Codex answer one/);
     assert.equal(await page.getAttribute("#generate-codex", "data-busy"), "false");
-    assert.match(await page.textContent("#status-log"), /Codex draft loaded/);
+    assert.match(await page.textContent("#status-log"), /AI draft loaded/);
   });
 
   test("apply labels add jobs to the queue and batch buttons react", { timeout: TEST_TIMEOUT_MS }, async () => {

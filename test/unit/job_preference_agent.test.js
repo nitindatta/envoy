@@ -58,7 +58,8 @@ test("annotateJobs boosts applied jobs and filters rejected ones from active vie
   assert.equal(jobs[0].url, "https://www.seek.com.au/job/1");
   assert.equal(jobs[0].lifecycle, "apply");
   assert.equal(jobs[1].lifecycle, "reject");
-  assert.equal(preferenceAgent.filterJobs(jobs, "active").length, 1);
+  assert.equal(preferenceAgent.filterJobs(jobs, "active").length, 0);
+  assert.equal(preferenceAgent.filterJobs(jobs, "selected").length, 1);
   assert.equal(preferenceAgent.filterJobs(jobs, "rejected").length, 1);
 });
 

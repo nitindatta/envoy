@@ -10,11 +10,11 @@ const { getProvider, listProviders } = require("./providers");
 const logger = require("./logger");
 const preferenceAgent = require("./job_preference_agent");
 const queue = require("./application_queue");
+const applicationAiService = require("./services/application_ai_service");
+const portalApplicationService = require("./services/portal_application_service");
 
 const PORTAL_DIR = path.join(core.ROOT, "portal");
 const DEFAULT_PORT = 4312;
-const DEFAULT_PROVIDER_ID = "upwork";
-const CODEX_PROXY_URL = process.env.CODEX_PROXY_URL || "http://127.0.0.1:4313";
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -82,16 +82,7 @@ function serveStatic(requestPath, response) {
   sendText(response, 200, fs.readFileSync(resolved, "utf8"), staticContentType(resolved));
 }
 
-function providerOptionsFrom(providerId, input = {}) {
-  const provider = getProvider(providerId || DEFAULT_PROVIDER_ID);
-  return {
-    browser: input.browser || "chrome",
-    url: input.url || provider.defaultUrl,
-    port: Number(input.port || 9222),
-    targetUrlPattern: input.targetUrlPattern || provider.defaultTargetUrlPattern || "upwork.com",
-    searchQuery: input.searchQuery || input.q || ""
-  };
-}
+const providerOptionsFrom = portalApplicationService.providerOptionsFrom;
 
 function providerSummary(providerId) {
   const provider = getProvider(providerId);
@@ -101,266 +92,6 @@ function providerSummary(providerId) {
     capabilities: provider.capabilities,
     status: provider.getStatus ? provider.getStatus() : { available: false }
   };
-}
-
-function selectedJobsFromRequest(providerId, input = {}) {
-  const selected = preferenceAgent.selectedJobs(providerId);
-  if (!input.urls || input.urls.length === 0) {
-    return selected;
-  }
-  const urlSet = new Set(input.urls);
-  return selected.filter((job) => urlSet.has(job.url));
-}
-
-async function withTimeout(task, timeoutMs, message) {
-  let timeoutId = null;
-  try {
-    return await Promise.race([
-      task(),
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
-async function codexProxyRequest(endpoint, payload) {
-  const response = await fetch(`${CODEX_PROXY_URL}${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || `Codex proxy request failed for ${endpoint}.`);
-  }
-  return data;
-}
-
-async function generateWithCodex(review, profile) {
-  return codexProxyRequest("/generate-from-review", { review, profile });
-}
-
-async function answerSeekQuestionWithCodex(question, review, profile) {
-  return codexProxyRequest("/answer-seek-question", { question, review, profile });
-}
-
-function fallbackReviewFromSelection(job, profile, providerId) {
-  const fallbackText = [job.title, job.summary].filter(Boolean).join("\n\n").trim();
-  return core.draftFromText(job.title || "selected-job", fallbackText, profile, {
-    provider: providerId,
-    jobUrl: job.url,
-    sourceTitle: job.title || "Selected job",
-    connectsRequired: job.connectsRequired || null,
-    isAvailable: true
-  });
-}
-
-function draftSourceFrom(review, generator, error = null) {
-  if (generator?.type) {
-    return {
-      draftSource: generator.type,
-      generatorSummary: generator.summary || "Prepared with Codex CLI."
-    };
-  }
-
-  if (review?.generator?.type) {
-    return {
-      draftSource: review.generator.type,
-      generatorSummary: review.generator.summary || "Prepared from a provider-specific fallback draft."
-    };
-  }
-
-  if (error) {
-    return {
-      draftSource: "heuristic-fallback",
-      generatorSummary: `Prepared with the local fallback draft because Codex was unavailable: ${error.message}`
-    };
-  }
-
-  return {
-    draftSource: "heuristic",
-    generatorSummary: "Prepared with the local heuristic draft."
-  };
-}
-
-async function prepareSelectedApplications(providerId, profile, input = {}) {
-  const provider = getProvider(providerId);
-  const selected = selectedJobsFromRequest(providerId, input);
-  if (selected.length === 0) {
-    throw new Error(`No selected ${provider.name} jobs are queued yet. Mark jobs with Apply first.`);
-  }
-
-  const prepared = [];
-  for (const job of selected) {
-    logger.appendLog("info", "Prepare selected started", {
-      provider: providerId,
-      url: job.url,
-      title: job.title
-    });
-
-    let review = null;
-    try {
-      review = await withTimeout(
-        () => provider.generateReview(profile, {
-          ...providerOptionsFrom(providerId, input),
-          url: job.url
-        }),
-        Number(input.prepareReviewTimeoutMs || 25000),
-        `Timed out while capturing the ${provider.name} job page.`
-      );
-    } catch (error) {
-      if (providerId !== "upwork") {
-        throw error;
-      }
-      logger.appendLog("warn", "Upwork review capture timed out; using selected-card fallback", {
-        provider: providerId,
-        url: job.url,
-        title: job.title,
-        message: error.message
-      });
-      review = fallbackReviewFromSelection(job, profile, providerId);
-      review.generator = {
-        type: "fallback-card-summary",
-        summary: "Prepared from the selected Upwork card summary because full page capture timed out."
-      };
-    }
-
-    if (review.eligibility?.allowed === false) {
-      const blockedDraft = draftSourceFrom(review, null);
-      const blockedItem = queue.upsertItem({
-        provider: providerId,
-        url: job.url,
-        title: review.sourceTitle || job.title,
-        status: "blocked",
-        reviewId: review.id,
-        proposal: review.proposal,
-        screeningAnswers: review.screeningAnswers || [],
-        draftSource: blockedDraft.draftSource,
-        generatorSummary: blockedDraft.generatorSummary,
-        lastError: review.eligibility.blockers.join("; ")
-      });
-      preferenceAgent.labelJob({
-        provider: providerId,
-        url: job.url,
-        title: review.sourceTitle || job.title,
-        summary: job.summary || "",
-        label: "reject",
-        reason: review.eligibility.blockers.join("; ")
-      });
-      prepared.push({
-        ...blockedItem,
-        review
-      });
-      continue;
-    }
-    let finalReview = review;
-    let generator = null;
-    let codexError = null;
-    try {
-      const generated = await withTimeout(
-        () => generateWithCodex(review, profile),
-        Number(input.prepareCodexTimeoutMs || 45000),
-        "Timed out while Codex was generating the proposal draft."
-      );
-      finalReview = generated.review;
-      generator = generated.generator;
-    } catch (error) {
-      codexError = error;
-      logger.appendLog("warn", "Codex prepare step failed; falling back to heuristic proposal", {
-        provider: providerId,
-        url: job.url,
-        message: error.message
-      });
-    }
-
-    const draftMeta = draftSourceFrom(finalReview, generator, codexError);
-
-    const item = queue.upsertItem({
-      provider: providerId,
-      url: job.url,
-      title: finalReview.sourceTitle || job.title,
-      status: "prepared",
-      reviewId: finalReview.id,
-      proposal: finalReview.proposal,
-      screeningAnswers: finalReview.screeningAnswers || [],
-      draftSource: draftMeta.draftSource,
-      generatorSummary: draftMeta.generatorSummary
-    });
-    prepared.push({
-      ...item,
-      generator,
-      review: finalReview
-    });
-  }
-  return prepared;
-}
-
-async function submitSelectedApplications(providerId, profile, input = {}) {
-  const provider = getProvider(providerId);
-  const selected = selectedJobsFromRequest(providerId, input);
-  if (selected.length === 0) {
-    throw new Error(`No selected ${provider.name} jobs are queued yet. Mark jobs with Apply first.`);
-  }
-
-  const preparedItems = [];
-  for (const job of selected) {
-    let queueItem = queue.listItems(providerId).find((item) => item.url === job.url && item.status === "prepared");
-    let review = null;
-
-    if (queueItem?.reviewId) {
-      const reviewPath = path.join(core.REVIEWS_DIR, `${queueItem.reviewId}.json`);
-      if (fs.existsSync(reviewPath)) {
-        review = core.readJson(reviewPath);
-      }
-    }
-
-    if (!review) {
-      const [prepared] = await prepareSelectedApplications(providerId, profile, {
-        ...input,
-        urls: [job.url]
-      });
-      queueItem = prepared;
-      review = prepared.review;
-    }
-
-    preparedItems.push({
-      ...queueItem,
-      review
-    });
-  }
-
-  const results = await provider.submitPreparedApplications(preparedItems, profile, {
-    ...providerOptionsFrom(providerId, input),
-    submit: true,
-    answerQuestion: (question, review, currentProfile) => answerSeekQuestionWithCodex(question, review, currentProfile)
-  });
-
-  for (const result of results) {
-    queue.upsertItem({
-      provider: providerId,
-      url: result.url,
-      title: result.title,
-      status: result.status,
-      lastError: result.message || ""
-    });
-    if (result.status === "submitted") {
-      preferenceAgent.labelJob({
-        provider: providerId,
-        url: result.url,
-        title: result.title,
-        label: "submitted",
-        reason: "Submitted from portal"
-      });
-    }
-  }
-
-  return results;
 }
 
 async function handleApi(request, response, parsedUrl) {
@@ -523,7 +254,7 @@ async function handleApi(request, response, parsedUrl) {
     return;
   }
 
-  if (request.method === "POST" && parsedUrl.pathname === "/api/proposal/generate-codex") {
+  if (request.method === "POST" && (parsedUrl.pathname === "/api/proposal/generate-codex" || parsedUrl.pathname === "/api/proposal/generate-ai")) {
     const body = await readBody(request);
     let review = null;
 
@@ -542,8 +273,8 @@ async function handleApi(request, response, parsedUrl) {
     }
 
     const profile = core.loadProfile(body.profilePath || core.DEFAULT_PROFILE);
-    const generated = await generateWithCodex(review, profile);
-    logger.appendLog("info", "Codex proposal generated", {
+    const generated = await applicationAiService.generateFromReview(review, profile);
+    logger.appendLog("info", "Local ChatGPT API proposal generated", {
       provider: review.provider || body.provider || "upwork",
       url: review.jobUrl || "",
       title: review.sourceTitle || review.jobName || "",
@@ -595,7 +326,7 @@ async function handleApi(request, response, parsedUrl) {
     const body = await readBody(request);
     const providerId = body.provider || "seek";
     const profile = core.loadProfile(body.profilePath || core.DEFAULT_PROFILE);
-    const items = await prepareSelectedApplications(providerId, profile, body);
+    const items = await portalApplicationService.prepareSelectedApplications(providerId, profile, body);
     logger.appendLog("info", "Batch prepare completed", {
       provider: providerId,
       count: items.length
@@ -611,7 +342,7 @@ async function handleApi(request, response, parsedUrl) {
       throw new Error("Batch submission is gated. Send approval exactly as I_APPROVE_SUBMIT.");
     }
     const profile = core.loadProfile(body.profilePath || core.DEFAULT_PROFILE);
-    const items = await submitSelectedApplications(providerId, profile, body);
+    const items = await portalApplicationService.submitSelectedApplications(providerId, profile, body);
     logger.appendLog("info", "Batch submit completed", {
       provider: providerId,
       count: items.length,
