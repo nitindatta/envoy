@@ -18,7 +18,10 @@ HITL pattern:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Literal
+
+log = logging.getLogger("apply")
 
 import aiosqlite
 from langgraph.graph import StateGraph, END
@@ -60,13 +63,17 @@ def build_apply_graph(
 
     # ── launch ─────────────────────────────────────────────────────────────
     async def node_launch(state: ApplyState) -> dict[str, Any]:
+        log.info("[launch] application_id=%s", state.application_id)
         app = await app_repo.get(state.application_id)
         if app is None:
+            log.warning("[launch] application not found: %s", state.application_id)
             return {"status": "failed", "error": f"application {state.application_id} not found"}
 
         try:
             session_key = await launch_session(tool_client, provider="seek")
+            log.info("[launch] session_key=%s url=%s", session_key, app.source_url)
         except (BrowserToolError, ToolServiceError) as exc:
+            log.error("[launch] launch_session failed: %s", exc)
             return {"status": "failed", "error": str(exc)}
 
         # Record session in DB for stale cleanup
@@ -82,12 +89,14 @@ def build_apply_graph(
                 {"session_key": session_key, "provider": "seek", "job_url": app.source_url},
             )
         except ToolServiceError as exc:
+            log.error("[launch] start_apply failed: %s", exc)
             return {"session_key": session_key, "status": "failed", "error": str(exc)}
 
         # Auth required — not logged in to SEEK
         if env.status == "needs_human":
             reason = (env.data or {}).get("reason", "auth_required")
             login_url = (env.data or {}).get("login_url", "")
+            log.warning("[launch] auth required: reason=%s login_url=%s", reason, login_url)
             return {
                 "session_key": session_key,
                 "status": "paused",
@@ -101,11 +110,14 @@ def build_apply_graph(
             }
 
         if env.status == "error":
+            log.error("[launch] start_apply returned error: %s", env.error)
             return {"session_key": session_key, "status": "failed", "error": env.error}
 
         apply_result = env.data or {}
 
         if apply_result.get("is_external_portal"):
+            log.info("[launch] external portal detected: portal_type=%s url=%s",
+                     apply_result.get("portal_type"), apply_result.get("apply_url"))
             return {
                 "session_key": session_key,
                 "status": "paused",
@@ -120,19 +132,24 @@ def build_apply_graph(
                 ),
             }
 
+        log.info("[launch] started successfully session_key=%s", session_key)
         return {"session_key": session_key}
 
     # ── inspect ────────────────────────────────────────────────────────────
     async def node_inspect(state: ApplyState) -> dict[str, Any]:
         if state.status in ("failed", "aborted", "completed", "paused"):
+            log.debug("[inspect] skipping — status=%s", state.status)
             return {}
 
+        log.info("[inspect] session_key=%s", state.session_key)
         try:
             step, env = await inspect_apply_step(tool_client, state.session_key)
         except (BrowserToolError, ToolServiceError) as exc:
+            log.error("[inspect] failed: %s", exc)
             return {"status": "failed", "error": str(exc)}
 
         if step is None:
+            log.warning("[inspect] drift — env.status=%s", env.status)
             return {
                 "status": "paused",
                 "pause_reason": "drift",
@@ -144,10 +161,15 @@ def build_apply_graph(
                 ),
             }
 
+        log.info("[inspect] page_type=%s fields=%d actions=%s",
+                 step.page_type, len(step.fields), step.visible_actions)
+
         if step.page_type == "confirmation":
+            log.info("[inspect] confirmation page — marking completed")
             return {"current_step": step, "status": "completed"}
 
         if step.page_type == "external_redirect":
+            log.info("[inspect] external redirect — pausing")
             return {"current_step": step, "status": "paused", "pause_reason": "external_portal"}
 
         return {"current_step": step}
@@ -155,9 +177,14 @@ def build_apply_graph(
     # ── propose ────────────────────────────────────────────────────────────
     async def node_propose(state: ApplyState) -> dict[str, Any]:
         if state.status in ("failed", "aborted", "completed", "paused"):
+            log.debug("[propose] skipping — status=%s", state.status)
             return {}
         if state.current_step is None or not state.current_step.fields:
+            log.debug("[propose] no fields to propose")
             return {"proposed_values": {}}
+
+        log.info("[propose] application_id=%s fields=%d page_type=%s",
+                 state.application_id, len(state.current_step.fields), state.current_step.page_type)
 
         drafts = await draft_repo.list_for_application(state.application_id)
         cover_letter = next(
@@ -172,6 +199,7 @@ def build_apply_graph(
             db_conn=db_conn,
         )
 
+        log.info("[propose] done: proposed=%d low_confidence=%s", len(proposed), low_conf_ids)
         return {"proposed_values": proposed, "low_confidence_ids": low_conf_ids}
 
     # ── gate ───────────────────────────────────────────────────────────────
@@ -179,12 +207,18 @@ def build_apply_graph(
     # The portal-approved values are already merged into state via update_state().
     # This node is a validation pass-through; routing handles abort.
     async def node_gate(state: ApplyState) -> dict[str, Any]:
+        log.info("[gate] resumed: action=%s approved_fields=%d",
+                 "abort" if state.status == "aborted" else "continue", len(state.proposed_values))
         return {}
 
     # ── fill ───────────────────────────────────────────────────────────────
     async def node_fill(state: ApplyState) -> dict[str, Any]:
         if state.status in ("failed", "aborted", "completed", "paused"):
+            log.debug("[fill] skipping — status=%s", state.status)
             return {}
+
+        log.info("[fill] session_key=%s fields=%d action_label=%r",
+                 state.session_key, len(state.proposed_values), state.action_label)
 
         try:
             next_step, env = await fill_and_continue(
@@ -194,6 +228,7 @@ def build_apply_graph(
                 action_label=state.action_label,
             )
         except (BrowserToolError, ToolServiceError) as exc:
+            log.error("[fill] fill_and_continue failed: %s", exc)
             return {"status": "failed", "error": str(exc)}
 
         history_entry = {
@@ -204,7 +239,9 @@ def build_apply_graph(
 
         if next_step is None:
             if env.status == "error":
+                log.error("[fill] error after fill: %s", env.error)
                 return {"status": "failed", "error": env.error, "step_history": new_history}
+            log.warning("[fill] drift after fill — env.status=%s", env.status)
             return {
                 "status": "paused",
                 "pause_reason": "drift",
@@ -217,7 +254,10 @@ def build_apply_graph(
                 "step_history": new_history,
             }
 
+        log.info("[fill] next page_type=%s fields=%d", next_step.page_type, len(next_step.fields))
+
         if next_step.page_type == "confirmation":
+            log.info("[fill] application submitted — confirmation page")
             return {
                 "current_step": next_step,
                 "status": "completed",
@@ -233,9 +273,13 @@ def build_apply_graph(
 
     # ── finish ─────────────────────────────────────────────────────────────
     async def node_finish(state: ApplyState) -> dict[str, Any]:
+        log.info("[finish] application_id=%s workflow_run_id=%s final_status=%s",
+                 state.application_id, state.workflow_run_id, state.status)
+
         if state.session_key:
             await close_session(tool_client, state.session_key)
             await session_repo.close(state.session_key)
+            log.debug("[finish] closed session_key=%s", state.session_key)
 
         target_app_state = {
             "completed": "applied",
@@ -246,6 +290,7 @@ def build_apply_graph(
 
         await app_repo.update_state(state.application_id, target_app_state)
         await run_repo.finish(state.workflow_run_id, state.status)
+        log.info("[finish] app state → %s steps=%d", target_app_state, len(state.step_history))
 
         return {}
 

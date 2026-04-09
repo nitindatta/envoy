@@ -16,8 +16,11 @@ Callers should check CoverLetterResult.is_suitable before using the letter.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Literal
+
+log = logging.getLogger("cover_letter")
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -39,6 +42,7 @@ class CoverLetterState(BaseModel):
     name: str
     headline: str
     summary: str
+    personal_statement: str
     experience_text: str
     projects_text: str
     skills: str
@@ -47,7 +51,9 @@ class CoverLetterState(BaseModel):
     max_words: int = 320
 
     # Intermediate outputs
-    requirements: str = ""
+    contact_name: str = ""         # hiring manager name if found in JD
+    requirements: str = ""        # must-have only
+    bonus_requirements: str = ""  # nice-to-have (not used for fit scoring)
     evidence: str = ""
     fit_score: float = 1.0          # 0.0–1.0 from evaluate_fit
     fit_verdict: str = ""           # "suitable" | "not_suitable"
@@ -76,17 +82,26 @@ def build_cover_letter_graph(settings: Settings) -> Any:
         api_key=settings.openai_api_key,
     )
 
-    # ── Node 1: extract_requirements ───────────────────────────────────────
-    async def extract_requirements(state: CoverLetterState) -> dict:
+    # ── Node 1: parse_jd ───────────────────────────────────────────────────
+    async def parse_jd(state: CoverLetterState) -> dict:
+        """Split the JD into must-have requirements vs duties vs nice-to-have.
+        This is a general structural step that works for any JD format.
+        Downstream nodes only see the requirements section."""
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "Extract the 4-5 most important requirements from this job description. "
-                        "Be specific — name the actual skills, behaviours, or deliverables asked for. "
-                        "Return a numbered list only. No preamble."
+                        "Parse a job description into structured data.\n"
+                        "Return JSON with exactly these keys:\n"
+                        '{"must_have": ["..."], "duties": ["..."], "nice_to_have": ["..."], "contact_name": "..."}\n'
+                        "must_have: skills, experience, qualifications the candidate must bring. "
+                        "Include years of experience, specific tools, technical skills, domain knowledge. "
+                        "duties: what the person will actually do in the role day-to-day. "
+                        "nice_to_have: bonus, preferred, or optional items explicitly marked as such. "
+                        'contact_name: the hiring manager or recruiter name if explicitly mentioned in the JD (e.g. "Contact Jane Smith"), otherwise empty string "". '
+                        "Return ONLY the JSON object."
                     ),
                 },
                 {
@@ -95,9 +110,39 @@ def build_cover_letter_graph(settings: Settings) -> Any:
                 },
             ],
             temperature=0.1,
-            max_tokens=300,
+            max_tokens=600,
         )
-        return {"requirements": response.choices[0].message.content or ""}
+        import json as _json
+        raw = (response.choices[0].message.content or "{}").strip()
+        raw = re.sub(r"```[a-z]*\n?", "", raw).strip()
+        try:
+            parsed = _json.loads(raw)
+            must_have = parsed.get("must_have", [])
+            nice_to_have = parsed.get("nice_to_have", [])
+            duties = parsed.get("duties", [])
+            contact_name = parsed.get("contact_name", "")
+            requirements = "\n".join(f"{i+1}. {r}" for i, r in enumerate(must_have))
+            bonus = "\n".join(f"- {r}" for r in nice_to_have)
+        except Exception:
+            log.warning("[parse_jd] JSON parse failed, using raw LLM output as requirements")
+            requirements = raw
+            bonus = ""
+            duties = []
+            contact_name = ""
+
+        log.info("[parse_jd] job=%s | must_have=%d duties=%d nice_to_have=%d contact=%r",
+                 state.job_title, len(must_have) if 'must_have' in dir() else '?',
+                 len(duties), len(nice_to_have) if 'nice_to_have' in dir() else '?',
+                 contact_name)
+        log.debug("[parse_jd] must_have:\n%s", requirements)
+        log.debug("[parse_jd] nice_to_have:\n%s", bonus)
+        return {"requirements": requirements, "bonus_requirements": bonus, "contact_name": contact_name}
+
+    # ── Node 2: extract_requirements (now reads structured requirements) ────
+    # Skipped — parse_jd already produces structured requirements.
+    # Kept as a no-op alias for graph compatibility.
+    async def extract_requirements(state: CoverLetterState) -> dict:
+        return {}  # requirements already set by parse_jd
 
     # ── Node 2: match_profile ──────────────────────────────────────────────
     async def match_profile(state: CoverLetterState) -> dict:
@@ -107,7 +152,7 @@ def build_cover_letter_graph(settings: Settings) -> Any:
 Headline: {state.headline}
 Summary: {state.summary}
 
-Experience:
+Experience (★ = quantified metric):
 {state.experience_text}
 
 Projects:
@@ -126,6 +171,7 @@ Skills: {state.skills}"""
                         "(a role, project, skill, or summary point). "
                         "Always pick something — your job is to find the best available evidence, "
                         "not to judge fit. Rate each match as STRONG, MODERATE, or WEAK. "
+                        "Prefer evidence lines marked ★ (quantified metrics) — cite the number directly. "
                         "Format each item as: [STRONG/MODERATE/WEAK] Requirement → Evidence\n"
                         "Do not say 'no match' or 'no evidence'. Always cite the closest item."
                     ),
@@ -141,7 +187,14 @@ Skills: {state.skills}"""
             temperature=0.1,
             max_tokens=600,
         )
-        return {"evidence": response.choices[0].message.content or ""}
+        evidence = response.choices[0].message.content or ""
+        strong = sum(1 for l in evidence.splitlines() if "[STRONG]" in l)
+        moderate = sum(1 for l in evidence.splitlines() if "[MODERATE]" in l)
+        weak = sum(1 for l in evidence.splitlines() if "[WEAK]" in l)
+        log.info("[match_profile] job=%s | STRONG=%d MODERATE=%d WEAK=%d",
+                 state.job_title, strong, moderate, weak)
+        log.debug("[match_profile] evidence:\n%s", evidence)
+        return {"evidence": evidence}
 
     # ── Node 3: evaluate_fit ───────────────────────────────────────────────
     async def evaluate_fit(state: CoverLetterState) -> dict:
@@ -157,7 +210,10 @@ Skills: {state.skills}"""
                         '{"fit_score": 0.0-1.0, "verdict": "suitable" or "not_suitable", '
                         '"gaps": ["gap 1", "gap 2"]}\n'
                         "fit_score >= 0.5 means suitable (enough evidence to write a credible letter). "
-                        "gaps should name the specific missing skills/experience, max 3 items. "
+                        "Score STRONG matches highly. MODERATE matches still count — they show transferable skills. "
+                        "Only list gaps for must-have requirements that are clearly missing. "
+                        "Do not list gaps for bonus/nice-to-have items. "
+                        "gaps should name the specific missing must-have skills/experience, max 3 items. "
                         "Return ONLY the JSON object, no other text."
                     ),
                 },
@@ -189,6 +245,9 @@ Skills: {state.skills}"""
             gaps = []
 
         is_suitable = fit_score >= 0.5
+        log.info("[evaluate_fit] job=%s | score=%.2f verdict=%s suitable=%s gaps=%s",
+                 state.job_title, fit_score, verdict, is_suitable, gaps)
+        log.debug("[evaluate_fit] raw LLM output: %s", raw)
         return {
             "fit_score": fit_score,
             "fit_verdict": verdict,
@@ -204,49 +263,99 @@ Skills: {state.skills}"""
             if "[STRONG]" in line or "[MODERATE]" in line
         ) or state.evidence  # fallback to all if nothing tagged
 
+        # Build greeting line
+        if state.contact_name:
+            greeting = f"Hi {state.contact_name},"
+        else:
+            greeting = "Hi Recruitment Manager,"
+
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        f"Write a cover letter in a {state.tone} tone. "
+                        f"Write a cover letter body in a {state.tone} tone. "
                         f"Target {state.max_words} words. "
-                        "Use only the evidence items provided as talking points. "
-                        "Open with one specific sentence naming the fit. "
-                        "Then 2-3 sentences of evidence. Brief closing. "
-                        "No 'I am excited to apply', no generic phrases, no sign-off."
+                        "Use exactly 3 paragraphs separated by blank lines (\\n\\n).\n"
+                        "Paragraph 1: one direct sentence naming the specific fit — what the candidate has that this role needs.\n"
+                        "Paragraph 2: 2–3 sentences of concrete evidence from the talking points — name actual tools, "
+                        "projects, or outcomes. Be specific, not vague.\n"
+                        "Paragraph 3: 1–2 sentences on broader context or domain depth, then one short closing sentence.\n\n"
+                        "STYLE RULES — follow these strictly:\n"
+                        "- Write like a senior engineer writing a direct email, not like an AI writing a cover letter.\n"
+                        "- Vary sentence length: mix short punchy sentences with longer ones. Avoid a uniform rhythm.\n"
+                        "- Use first person naturally. Contractions are fine (I've, I'm, it's).\n"
+                        "- Be specific. Name tools, systems, team sizes, outcomes — never say 'various technologies' or 'multiple projects'.\n"
+                        "- No hyphens or dashes of any kind: do NOT use — or – or - as punctuation mid-sentence. "
+                        "Rewrite those phrases as separate sentences or use 'and', 'which', 'where', or a comma instead.\n"
+                        "- No buzzwords: do NOT use leverage, utilize, passionate, excited, dynamic, innovative, "
+                        "transformative, robust, spearhead, streamline, synergy, cutting-edge, foster, facilitate, "
+                        "thrive, impactful, drive results, or any similar corporate filler.\n"
+                        "- No self-praise: avoid 'strong communicator', 'team player', 'fast learner', 'detail-oriented'.\n"
+                        "- No greeting, no sign-off, no 'I am writing to apply'. Return ONLY the 3 paragraphs."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Write a cover letter for {state.name} applying to "
+                        f"Write the cover letter body for {state.name} applying to "
                         f"{state.job_title} at {state.job_company}.\n\n"
-                        f"Use these matched talking points:\n{strong_evidence}"
+                        f"Candidate's voice (use this to set tone and weave in naturally — "
+                        f"do not quote it directly):\n{state.personal_statement}\n\n"
+                        f"Matched talking points (use numbers/metrics where available):\n{strong_evidence}"
                     ),
                 },
             ],
             temperature=0.35,
             max_tokens=700,
         )
-        return {"draft": response.choices[0].message.content or ""}
+        draft = response.choices[0].message.content or ""
+        log.info("[write_draft] job=%s | words=%d", state.job_title, len(draft.split()))
+        return {"draft": draft}
 
     # ── Node 5: check_length ───────────────────────────────────────────────
     def check_length(state: CoverLetterState) -> dict:
-        text = state.draft.strip()
-        words = text.split()
-        word_count = len(words)
+        body = state.draft.strip()
+        word_count = len(body.split())
 
-        if word_count <= state.max_words:
-            return {"cover_letter": text, "word_count": word_count}
+        if word_count > state.max_words:
+            # Trim paragraph by paragraph to preserve structure
+            paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+            kept: list[str] = []
+            total = 0
+            for para in paragraphs:
+                para_words = para.split()
+                if total + len(para_words) <= state.max_words:
+                    kept.append(para)
+                    total += len(para_words)
+                else:
+                    # Fit as many words of this paragraph as possible, ending on a sentence
+                    remaining = state.max_words - total
+                    if remaining > 0:
+                        truncated = " ".join(para_words[:remaining])
+                        m = re.search(r"[.!?][^.!?]*$", truncated)
+                        if m:
+                            truncated = truncated[: m.start() + 1].strip()
+                        if truncated:
+                            kept.append(truncated)
+                    break
+            body = "\n\n".join(kept)
+            log.info("[check_length] job=%s | trimmed %d→%d words", state.job_title, word_count, len(body.split()))
 
-        truncated = " ".join(words[: state.max_words])
-        match = re.search(r"[.!?][^.!?]*$", truncated)
-        if match:
-            truncated = truncated[: match.start() + 1]
+        # Strip any em/en dashes that slipped through
+        body = body.replace("—", ",").replace("–", ",")
 
-        return {"cover_letter": truncated.strip(), "word_count": len(truncated.split())}
+        # Build greeting
+        if state.contact_name:
+            greeting = f"Hi {state.contact_name},"
+        else:
+            greeting = "Hi Recruitment Manager,"
+
+        sign_off = f"Regards,\n{state.name}"
+        cover_letter = f"{greeting}\n\n{body}\n\n{sign_off}"
+
+        return {"cover_letter": cover_letter, "word_count": len(body.split())}
 
     # ── Routing ────────────────────────────────────────────────────────────
     def route_after_evaluate(state: CoverLetterState) -> Literal["write_draft", "__end__"]:
@@ -254,14 +363,14 @@ Skills: {state.skills}"""
 
     # ── Assemble ───────────────────────────────────────────────────────────
     graph = StateGraph(CoverLetterState)
-    graph.add_node("extract_requirements", extract_requirements)
+    graph.add_node("parse_jd", parse_jd)
     graph.add_node("match_profile", match_profile)
     graph.add_node("evaluate_fit", evaluate_fit)
     graph.add_node("write_draft", write_draft)
     graph.add_node("check_length", check_length)
 
-    graph.set_entry_point("extract_requirements")
-    graph.add_edge("extract_requirements", "match_profile")
+    graph.set_entry_point("parse_jd")
+    graph.add_edge("parse_jd", "match_profile")
     graph.add_edge("match_profile", "evaluate_fit")
     graph.add_conditional_edges("evaluate_fit", route_after_evaluate)
     graph.add_edge("write_draft", "check_length")
@@ -281,6 +390,8 @@ def _format_experience(profile: dict) -> str:
             line += f" ({period})"
         for h in exp.get("highlights", [])[:4]:
             line += f"\n    • {h}"
+        for m in exp.get("metrics", [])[:3]:
+            line += f"\n    ★ {m}"
         lines.append(line)
     return "\n".join(lines) or "Not provided"
 
@@ -311,6 +422,7 @@ async def run_cover_letter(
         name=profile.get("name", ""),
         headline=profile.get("headline", ""),
         summary=profile.get("summary", ""),
+        personal_statement=profile.get("personal_statement", ""),
         experience_text=_format_experience(profile),
         projects_text=_format_projects(profile),
         skills=", ".join(profile.get("core_strengths", [])),

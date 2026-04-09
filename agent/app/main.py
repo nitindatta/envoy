@@ -1,7 +1,22 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+
+_log_fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s", datefmt="%H:%M:%S")
+
+_console = logging.StreamHandler()
+_console.setLevel(logging.INFO)
+_console.setFormatter(_log_fmt)
+
+_file = logging.FileHandler("../logs/agent.log", encoding="utf-8")
+_file.setLevel(logging.DEBUG)
+_file.setFormatter(_log_fmt)
+
+logging.root.setLevel(logging.DEBUG)
+logging.root.addHandler(_console)
+logging.root.addHandler(_file)
 
 from app.api.applications import router as applications_router
 from app.api.health import router as health_router

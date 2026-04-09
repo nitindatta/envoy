@@ -8,8 +8,12 @@ Drift is returned as-is so callers can escalate.
 
 from __future__ import annotations
 
+import logging
+
 from app.state.apply import StepInfo
 from app.tools.client import ToolClient, ToolServiceError
+
+log = logging.getLogger("browser_client")
 
 
 class BrowserToolError(Exception):
@@ -27,29 +31,37 @@ def _require_ok(env, operation: str) -> dict:
 
 async def launch_session(client: ToolClient, provider: str) -> str:
     """Mint a new browser session. Returns session_key."""
+    log.debug("[launch_session] provider=%s", provider)
     env = await client.call("/tools/browser/launch_session", {"provider": provider})
     data = _require_ok(env, "launch_session")
+    log.info("[launch_session] session_key=%s", data["session_key"])
     return data["session_key"]
 
 
 async def open_url(client: ToolClient, session_key: str, url: str) -> str:
     """Navigate to url. Returns final page_url."""
+    log.debug("[open_url] session=%s url=%s", session_key, url)
     env = await client.call(
         "/tools/browser/open_url", {"session_key": session_key, "url": url}
     )
     data = _require_ok(env, "open_url")
+    log.debug("[open_url] final_url=%s", data["page_url"])
     return data["page_url"]
 
 
 async def inspect_apply_step(client: ToolClient, session_key: str):
     """Inspect current page. Returns (StepInfo, envelope) — envelope may be drift."""
+    log.debug("[inspect_apply_step] session=%s", session_key)
     env = await client.call(
         "/tools/browser/inspect_apply_step", {"session_key": session_key}
     )
     if env.status in ("drift", "needs_human"):
+        log.warning("[inspect_apply_step] status=%s", env.status)
         return None, env
     data = _require_ok(env, "inspect_apply_step")
-    return StepInfo.model_validate(data), env
+    step = StepInfo.model_validate(data)
+    log.debug("[inspect_apply_step] page_type=%s fields=%d", step.page_type, len(step.fields))
+    return step, env
 
 
 async def fill_and_continue(
@@ -61,6 +73,8 @@ async def fill_and_continue(
     """Fill fields + click action + inspect next step. Returns (StepInfo | None, envelope)."""
     # Route expects [{id, value}] array format
     fields_array = [{"id": k, "value": v} for k, v in fields.items()]
+    log.info("[fill_and_continue] session=%s fields=%d action=%r", session_key, len(fields_array), action_label)
+    log.debug("[fill_and_continue] field_ids=%s", [f["id"] for f in fields_array])
     env = await client.call(
         "/tools/apply/fill_and_continue",
         {
@@ -70,10 +84,13 @@ async def fill_and_continue(
         },
     )
     if env.status in ("drift", "needs_human", "error"):
+        log.warning("[fill_and_continue] status=%s error=%s", env.status, env.error)
         return None, env
     data = env.data or {}
     step_data = data.get("new_page_state")  # route returns new_page_state, not next_step
     step = StepInfo.model_validate(step_data) if step_data else None
+    if step:
+        log.debug("[fill_and_continue] next page_type=%s fields=%d", step.page_type, len(step.fields))
     return step, env
 
 
@@ -81,6 +98,7 @@ async def click_action(
     client: ToolClient, session_key: str, action_label: str
 ) -> None:
     """Click a visible action button (no fill)."""
+    log.debug("[click_action] session=%s action=%r", session_key, action_label)
     env = await client.call(
         "/tools/browser/click_action",
         {"session_key": session_key, "action_label": action_label},
@@ -90,12 +108,12 @@ async def click_action(
 
 async def close_session(client: ToolClient, session_key: str) -> None:
     """Close browser session and release resources."""
+    log.debug("[close_session] session=%s", session_key)
     env = await client.call(
         "/tools/browser/close_session", {"session_key": session_key}
     )
     if env.status == "error":
-        # Log but don't raise — cleanup should be best-effort
-        pass
+        log.warning("[close_session] cleanup error (ignored): %s", env.error)
 
 
 async def start_apply(
@@ -105,9 +123,12 @@ async def start_apply(
 
     Returns dict with keys: apply_url, is_external_portal, portal_type.
     """
+    log.info("[start_apply] session=%s provider=%s url=%s", session_key, provider, job_url)
     env = await client.call(
         "/tools/providers/start_apply",
         {"session_key": session_key, "provider": provider, "job_url": job_url},
     )
     data = _require_ok(env, "start_apply")
+    log.info("[start_apply] result: is_external=%s portal_type=%s",
+             data.get("is_external_portal"), data.get("portal_type"))
     return data

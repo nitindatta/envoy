@@ -8,11 +8,14 @@ All prompts are self-contained — no conversation history is maintained.
 from __future__ import annotations
 
 import json
+import logging
 
 from openai import AsyncOpenAI
 
 from app.settings import Settings
 from app.state.prepare import SeekJobDetail
+
+log = logging.getLogger("ai")
 
 
 def _build_client(settings: Settings) -> AsyncOpenAI:
@@ -83,6 +86,7 @@ CANDIDATE PROFILE:
 
 List the 3 strongest specific connections between this candidate and this job."""
 
+    log.info("[generate_cover_letter] pass1 job=%s company=%s", job.title, job.company)
     match_response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -93,6 +97,7 @@ List the 3 strongest specific connections between this candidate and this job.""
         max_tokens=400,
     )
     talking_points = match_response.choices[0].message.content or ""
+    log.debug("[generate_cover_letter] talking_points:\n%s", talking_points)
 
     # ── Pass 2: write the cover letter from the matched points ─────────────
     write_system = (
@@ -109,6 +114,7 @@ Use these specific talking points as the backbone — address them in order:
 
 Write only the letter body."""
 
+    log.info("[generate_cover_letter] pass2 job=%s | tone=%s max_words=%d", job.title, tone, max_words)
     write_response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -119,7 +125,10 @@ Write only the letter body."""
         max_tokens=600,
     )
 
-    return write_response.choices[0].message.content or ""
+    letter = write_response.choices[0].message.content or ""
+    log.info("[generate_cover_letter] done job=%s | words=%d", job.title, len(letter.split()))
+    log.debug("[generate_cover_letter] letter:\n%s", letter)
+    return letter
 
 
 async def predict_questions(
@@ -146,6 +155,7 @@ Experience: {', '.join(e['title'] + ' at ' + e['company'] for e in profile.get('
 
 Predict 5 interview questions and draft answers."""
 
+    log.info("[predict_questions] job=%s company=%s", job.title, job.company)
     response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -157,10 +167,15 @@ Predict 5 interview questions and draft answers."""
     )
 
     raw = response.choices[0].message.content or "[]"
+    log.debug("[predict_questions] raw:\n%s", raw)
     try:
         questions = json.loads(raw)
         if not isinstance(questions, list):
+            log.warning("[predict_questions] expected list, got %s", type(questions).__name__)
             return []
-        return [q for q in questions if isinstance(q, dict) and "question" in q and "answer" in q]
+        result = [q for q in questions if isinstance(q, dict) and "question" in q and "answer" in q]
+        log.info("[predict_questions] done job=%s | count=%d", job.title, len(result))
+        return result
     except json.JSONDecodeError:
+        log.warning("[predict_questions] JSON parse failed for job=%s", job.title)
         return []

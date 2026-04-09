@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Persistence
     repo_root: Path = Field(default=Path(__file__).resolve().parents[2])
     sqlite_path: Path = Field(default=Path("../automation/agent.db"))
-    profile_path: Path = Field(default=Path("../profile/nitin_datta_profile.json"))
+    profile_path: Path = Field(default=Path("profile/nitin_datta_profile.json"))
 
     @property
     def resolved_sqlite_path(self) -> Path:

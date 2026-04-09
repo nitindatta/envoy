@@ -13,10 +13,13 @@ itself only creates the draft and marks state="prepared".
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from langgraph.graph import StateGraph, END
+
+log = logging.getLogger("prepare")
 
 from app.persistence.sqlite.applications import SqliteApplicationRepository, SqliteDraftRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
@@ -38,28 +41,39 @@ def build_prepare_graph(
     profile = _load_profile(settings)
 
     async def fetch_detail(state: PrepareState) -> dict[str, Any]:
+        log.info("[fetch_detail] job_id=%s", state.job_id)
         job = await job_repo.get(state.job_id)
         if job is None:
+            log.warning("[fetch_detail] job_id=%s not found in database", state.job_id)
             return {"error": f"job {state.job_id} not found in database"}
 
         # Extract provider_job_id from payload
         provider_job_id = str(job.payload.get("provider_job_id", ""))
         if not provider_job_id:
+            log.warning("[fetch_detail] job_id=%s has no provider_job_id", state.job_id)
             return {"error": f"job {state.job_id} has no provider_job_id in payload"}
 
+        log.info("[fetch_detail] fetching detail for provider_job_id=%s title=%s", provider_job_id, job.title)
         detail = await fetch_job_detail(tool_client, job_id=provider_job_id)
+        log.info("[fetch_detail] done title=%s company=%s desc_len=%d",
+                 detail.title, detail.company, len(detail.description))
         return {"detail": detail}
 
     async def generate(state: PrepareState) -> dict[str, Any]:
         if state.error or state.detail is None:
+            log.warning("[generate] skipping — error=%s detail=%s", state.error, state.detail)
             return {}
 
+        log.info("[generate] starting cover letter + Q&A for job=%s", state.detail.title)
         cl_result = await run_cover_letter(
             settings, job=state.detail, profile=profile
         )
+        log.info("[generate] cover_letter: suitable=%s gaps=%s words=%d",
+                 cl_result.is_suitable, cl_result.gaps, len(cl_result.cover_letter.split()))
         questions = await predict_questions(
             settings, job=state.detail, profile=profile
         )
+        log.info("[generate] done: questions=%d", len(questions))
         return {
             "cover_letter": cl_result.cover_letter,
             "is_suitable": cl_result.is_suitable,
@@ -68,11 +82,16 @@ def build_prepare_graph(
         }
 
     async def persist(state: PrepareState) -> dict[str, Any]:
-        if state.error or not state.is_suitable:
-            return {}  # Not suitable — nothing to persist
+        if state.error:
+            log.warning("[persist] skipping — error=%s", state.error)
+            return {}
+        if not state.is_suitable:
+            log.info("[persist] skipping — not suitable (gaps=%s)", state.gaps)
+            return {}
 
         job = await job_repo.get(state.job_id)
         if job is None:
+            log.warning("[persist] job_id=%s not found", state.job_id)
             return {"error": f"job {state.job_id} not found"}
 
         app_id = await app_repo.create(
@@ -80,6 +99,7 @@ def build_prepare_graph(
             source_provider=job.provider,
             source_url=job.source_url,
         )
+        log.info("[persist] created application_id=%s for job=%s", app_id, state.job_id)
 
         await draft_repo.create(
             application_id=app_id,
@@ -99,6 +119,8 @@ def build_prepare_graph(
                 content=json.dumps(qa),
             )
 
+        log.info("[persist] saved cover_letter + %d Q&A drafts for application_id=%s",
+                 len(state.questions), app_id)
         return {"application_id": app_id}
 
     graph = StateGraph(PrepareState)

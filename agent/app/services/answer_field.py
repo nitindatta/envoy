@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 
 from openai import AsyncOpenAI
 
 from app.settings import Settings
 from app.state.apply import FieldInfo
+
+log = logging.getLogger("answer_field")
 
 
 # ── 1. Profile lookup ──────────────────────────────────────────────────────
@@ -134,30 +137,33 @@ async def propose_field_values(
     proposed: dict[str, str] = {}
     low_confidence: list[str] = []
 
-    # Cover letter field — use the generated draft
-    cover_letter_lower = cover_letter.lower() if cover_letter else ""
+    log.info("[propose_field_values] resolving %d fields", len(fields))
 
     for field in fields:
         if field.field_type == "file":
-            continue  # Skip — assume pre-uploaded
+            log.debug("[field:%s] type=file — skipped", field.id)
+            continue
 
         label_lower = field.label.lower()
 
         # Cover letter textarea
         if "cover letter" in label_lower and field.field_type == "textarea":
             proposed[field.id] = cover_letter
+            log.debug("[field:%s] label=%r → cover_letter (%d words)", field.id, field.label, len(cover_letter.split()))
             continue
 
         # 1. Profile lookup
         value = _lookup_from_profile(field, profile)
         if value:
             proposed[field.id] = value
+            log.debug("[field:%s] label=%r → profile value=%r", field.id, field.label, value)
             continue
 
         # 2. Memory lookup
         value = await _lookup_from_memory(field, db_conn)
         if value:
             proposed[field.id] = value
+            log.debug("[field:%s] label=%r → memory value=%r", field.id, field.label, value)
             continue
 
         # 3. LLM
@@ -165,5 +171,9 @@ async def propose_field_values(
         proposed[field.id] = value
         if confidence < LOW_CONFIDENCE_THRESHOLD:
             low_confidence.append(field.id)
+            log.info("[field:%s] label=%r → LLM LOW_CONF=%.2f value=%r", field.id, field.label, confidence, value)
+        else:
+            log.debug("[field:%s] label=%r → LLM conf=%.2f value=%r", field.id, field.label, confidence, value)
 
+    log.info("[propose_field_values] done: proposed=%d low_confidence=%s", len(proposed), low_confidence)
     return proposed, low_confidence
