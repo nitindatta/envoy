@@ -1,4 +1,18 @@
+# Dependencies
 node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+portal/dist/
+node/dist/
 
 # Local tooling
 .codex
@@ -20,27 +34,24 @@ Thumbs.db
 *.docx
 *.pdf
 
-# Runtime browser/session state
-automation/browser-profile/
-automation/browser-session.json
+# Legacy automation workspace (pre-rewrite)
+automation/
 
-# Generated logs and transient snapshots
-automation/logs/
-automation/application-queue.json
-automation/job-labels.jsonl
-automation/visible-jobs.json
-automation/visible-jobs-seek.json
+# Runtime data
+python/data/
+*.sqlite
+*.sqlite-journal
 
-# Codex CLI runtime artifacts
-automation/codex-cli/
-automation/codex-exec-probe.js
-automation/codex-exec-probe-result.txt
-automation/codex-probe-schema.json
-automation/codex-spawn-probe.js
-automation/codex-spawn-probe-result.txt
+# Playwright artifacts
+node/.playwright/
+node/test-results/
+node/playwright-report/
 
-# Generated review cache
-automation/reviews/
-
+# Legacy generated artifacts
 applications/
 jobs/
+
+# Playwright persistent Chrome profile
+tools/.chrome-profile/
+.cla*
+logs/

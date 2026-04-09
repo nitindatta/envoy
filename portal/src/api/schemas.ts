@@ -1,0 +1,110 @@
+import { z } from "zod";
+
+export const healthSchema = z.object({
+  service: z.string(),
+  status: z.string(),
+});
+export type Health = z.infer<typeof healthSchema>;
+
+export const jobSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  source_url: z.string(),
+  canonical_key: z.string(),
+  title: z.string(),
+  company: z.string(),
+  location: z.string().nullable(),
+  summary: z.string().nullable(),
+  payload: z.record(z.unknown()),
+  discovered_at: z.string(),
+  last_seen_at: z.string(),
+});
+export type Job = z.infer<typeof jobSchema>;
+
+export const jobListSchema = z.object({
+  jobs: z.array(jobSchema),
+});
+
+export const searchResponseSchema = z.object({
+  discovered: z.number(),
+  blocked: z.number(),
+  persisted: z.number(),
+  job_ids: z.array(z.string()),
+});
+export type SearchResponse = z.infer<typeof searchResponseSchema>;
+
+export const draftSchema = z.object({
+  id: z.string(),
+  application_id: z.string(),
+  draft_type: z.string(),
+  question_fingerprint: z.string().nullable(),
+  generator: z.string(),
+  content: z.string(),
+  version: z.number(),
+  created_at: z.string(),
+});
+export type Draft = z.infer<typeof draftSchema>;
+
+export const applicationSchema = z.object({
+  id: z.string(),
+  job_id: z.string(),
+  source_provider: z.string(),
+  source_url: z.string(),
+  state: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  // joined job fields
+  job_title: z.string().nullable().optional(),
+  job_company: z.string().nullable().optional(),
+  job_location: z.string().nullable().optional(),
+  job_source_url: z.string().nullable().optional(),
+  job_summary: z.string().nullable().optional(),
+});
+export type Application = z.infer<typeof applicationSchema>;
+
+export const applicationDetailSchema = z.object({
+  application: applicationSchema,
+  drafts: z.array(draftSchema),
+});
+
+export const prepareResponseSchema = z.object({
+  application_id: z.string(),
+  cover_letter: z.string(),
+  questions: z.array(z.object({ question: z.string(), answer: z.string() })),
+  is_suitable: z.boolean().optional(),
+  gaps: z.array(z.string()).optional(),
+});
+export type PrepareResponse = z.infer<typeof prepareResponseSchema>;
+
+// Apply workflow schemas
+export const fieldInfoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  field_type: z.string(),
+  required: z.boolean(),
+  current_value: z.string().nullable().optional(),
+  options: z.array(z.string()).nullable().optional(),
+  max_length: z.number().nullable().optional(),
+});
+export type FieldInfo = z.infer<typeof fieldInfoSchema>;
+
+export const stepInfoSchema = z.object({
+  page_url: z.string(),
+  page_type: z.string(),
+  step_index: z.number().nullable().optional(),
+  total_steps_estimate: z.number().nullable().optional(),
+  is_external_portal: z.boolean().optional(),
+  portal_type: z.string().nullable().optional(),
+  fields: z.array(fieldInfoSchema),
+  visible_actions: z.array(z.string()),
+});
+export type StepInfo = z.infer<typeof stepInfoSchema>;
+
+export const applyStepResponseSchema = z.object({
+  workflow_run_id: z.string(),
+  status: z.string(),
+  step: stepInfoSchema.nullable().optional(),
+  proposed_values: z.record(z.string()),
+  low_confidence_ids: z.array(z.string()).optional(),
+});
+export type ApplyStepResponse = z.infer<typeof applyStepResponseSchema>;

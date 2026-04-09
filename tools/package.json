@@ -1,0 +1,36 @@
+{
+  "name": "@job-agent/tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic browser and provider tool service. Called by the agent/ service; never calls back.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node --import tsx/esm src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint 'src/**/*.ts' 'test/**/*.ts'",
+    "format": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
+    "test": "vitest run",
+    "dump:seek": "tsx scripts/dump-seek-fixture.ts",
+    "dump:seek-detail": "tsx scripts/dump-seek-detail.ts"
+  },
+  "dependencies": {
+    "@types/jsdom": "^28.0.1",
+    "fastify": "^5.8.4",
+    "jsdom": "^29.0.2",
+    "playwright": "^1.47.0",
+    "playwright-core": "^1.59.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.3"
+  }
+}
