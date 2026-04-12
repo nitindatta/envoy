@@ -211,6 +211,43 @@ def build_apply_graph(
                  "abort" if state.status == "aborted" else "continue", len(state.proposed_values))
         return {}
 
+    # ── submit_gate ────────────────────────────────────────────────────────
+    # Mandatory HITL pause before the final submit click.
+    # Runs only on RESUME — portal confirmed the user wants to submit to SEEK.
+    async def node_submit_gate(state: ApplyState) -> dict[str, Any]:
+        log.info("[submit_gate] user confirmed submit: action_label=%r", state.submit_action_label)
+        return {"status": "running"}
+
+    # ── submit ─────────────────────────────────────────────────────────────
+    async def node_submit(state: ApplyState) -> dict[str, Any]:
+        if state.status in ("failed", "aborted"):
+            log.debug("[submit] skipping — status=%s", state.status)
+            return {}
+
+        log.info("[submit] clicking final submit: session=%s action=%r",
+                 state.session_key, state.submit_action_label)
+        try:
+            next_step, env = await fill_and_continue(
+                tool_client,
+                state.session_key,
+                fields={},
+                action_label=state.submit_action_label,
+            )
+        except (BrowserToolError, ToolServiceError) as exc:
+            log.error("[submit] fill_and_continue failed: %s", exc)
+            return {"status": "failed", "error": str(exc)}
+
+        if next_step is None:
+            log.error("[submit] error or drift after submit: %s", env.status)
+            return {"status": "failed", "error": env.error or "drift after submit"}
+
+        if next_step.page_type == "confirmation":
+            log.info("[submit] confirmed — application submitted")
+            return {"current_step": next_step, "status": "completed"}
+
+        log.warning("[submit] unexpected page after submit: page_type=%s", next_step.page_type)
+        return {"current_step": next_step, "status": "completed"}
+
     # ── fill ───────────────────────────────────────────────────────────────
     async def node_fill(state: ApplyState) -> dict[str, Any]:
         if state.status in ("failed", "aborted", "completed", "paused"):
@@ -261,6 +298,30 @@ def build_apply_graph(
             return {
                 "current_step": next_step,
                 "status": "completed",
+                "step_history": new_history,
+            }
+
+        # 0-field form page = SEEK review/summary page. Pause for user to confirm submit.
+        if next_step.page_type == "form" and len(next_step.fields) == 0:
+            # Pick the real submit button — ignore noise like "Open app", "Back", "Cancel"
+            _submit_keywords = ("submit", "continue", "apply", "send", "confirm", "next")
+            _exclude_keywords = ("open app", "back", "cancel", "close", "sign", "log")
+            submit_label = next(
+                (a for a in next_step.visible_actions
+                 if any(kw in a.lower() for kw in _submit_keywords)
+                 and not any(ex in a.lower() for ex in _exclude_keywords)),
+                next(
+                    (a for a in next_step.visible_actions
+                     if not any(ex in a.lower() for ex in _exclude_keywords)),
+                    "Continue",
+                ),
+            )
+            log.info("[fill] review page detected — pausing for submit confirmation (action=%r) all_actions=%s",
+                     submit_label, next_step.visible_actions)
+            return {
+                "current_step": next_step,
+                "status": "awaiting_submit",
+                "submit_action_label": submit_label,
                 "step_history": new_history,
             }
 
@@ -318,10 +379,17 @@ def build_apply_graph(
             return "gate"   # human review needed
         return "fill"       # auto-proceed
 
-    def _route_after_fill(state: ApplyState) -> Literal["propose", "finish"]:
+    def _route_after_fill(state: ApplyState) -> Literal["propose", "submit_gate", "finish"]:
         if state.status in ("failed", "completed", "aborted", "paused"):
             return "finish"
+        if state.status == "awaiting_submit":
+            return "submit_gate"
         return "propose"
+
+    def _route_after_submit_gate(state: ApplyState) -> Literal["submit", "finish"]:
+        if state.status == "aborted":
+            return "finish"
+        return "submit"
 
     # ── assemble graph ─────────────────────────────────────────────────────
     graph = StateGraph(ApplyState)
@@ -330,6 +398,8 @@ def build_apply_graph(
     graph.add_node("propose", node_propose)
     graph.add_node("gate", node_gate)
     graph.add_node("fill", node_fill)
+    graph.add_node("submit_gate", node_submit_gate)
+    graph.add_node("submit", node_submit)
     graph.add_node("finish", node_finish)
 
     graph.set_entry_point("launch")
@@ -338,6 +408,8 @@ def build_apply_graph(
     graph.add_conditional_edges("propose", _route_after_propose)
     graph.add_conditional_edges("gate", _route_after_gate)
     graph.add_conditional_edges("fill", _route_after_fill)
+    graph.add_conditional_edges("submit_gate", _route_after_submit_gate)
+    graph.add_edge("submit", "finish")
     graph.add_edge("finish", END)
 
     return graph
@@ -346,7 +418,7 @@ def build_apply_graph(
 def _make_compiled(graph_builder, checkpointer):
     return graph_builder.compile(
         checkpointer=checkpointer,
-        interrupt_before=["gate"],
+        interrupt_before=["gate", "submit_gate"],
     )
 
 

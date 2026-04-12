@@ -54,6 +54,7 @@ class Job(BaseModel):
     location: str | None = None
     summary: str | None = None
     payload: dict[str, object]
+    state: str = "discovered"  # discovered | in_review | ignored
     discovered_at: datetime
     last_seen_at: datetime
 

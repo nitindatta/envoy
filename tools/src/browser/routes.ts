@@ -101,7 +101,10 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
           await el.selectOption({ label: value }).catch(async () => {
             await el.selectOption({ value });
           });
-        } else if (inputType === 'radio' || inputType === 'checkbox') {
+        } else if (inputType === 'checkbox') {
+          const shouldCheck = ['yes', 'true', '1'].includes(value.toLowerCase());
+          if (shouldCheck) await el.check(); else await el.uncheck();
+        } else if (inputType === 'radio') {
           const option = session.page
             .locator(`input[name="${id}"]`)
             .filter({ hasText: value });
@@ -215,6 +218,9 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
           }
           if (matched) filled_ids.push(id); else failed_ids.push(id);
           continue;
+        } else if (inputType === 'checkbox') {
+          const shouldCheck = ['yes', 'true', '1'].includes(value.toLowerCase());
+          if (shouldCheck) await el.check(); else await el.uncheck();
         } else if (tagName === 'select') {
           await el.selectOption({ label: value }).catch(async () => el.selectOption({ value }));
         } else if (inputType === 'file') {
@@ -349,7 +355,7 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     await session.page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
     await session.page.waitForTimeout(2_000);
 
-    const applyUrl = session.page.url();
+    let applyUrl = session.page.url();
 
     // Redirected to login after clicking Apply
     if (isLoginUrl(applyUrl)) {
@@ -359,10 +365,43 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
       };
     }
 
-    const is_external_portal = !applyUrl.includes('seek.com.au');
-    const portal_type = is_external_portal
-      ? detectPortalType(applyUrl)
-      : null;
+    // SEEK's own /apply/external intermediate page — click through to the employer's actual portal
+    if (applyUrl.includes('seek.com.au') && applyUrl.includes('/apply/external')) {
+      try {
+        // Try role-based selectors first, then fall back to any external href on the page
+        const clicked = await session.page
+          .getByRole('link', { name: /continue|apply|proceed|go to/i })
+          .or(session.page.getByRole('button', { name: /continue|apply|proceed|go to/i }))
+          .first()
+          .click({ timeout: 6_000 })
+          .then(() => true)
+          .catch(() => false);
+
+        if (!clicked) {
+          // Last resort: find any anchor pointing off seek.com.au and click it
+          const externalHref = await session.page.evaluate(() => {
+            const a = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))
+              .find((el) => el.href && !el.href.includes('seek.com.au'));
+            return a ? a.href : null;
+          });
+          if (externalHref) {
+            await session.page.goto(externalHref, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+          }
+        }
+
+        await session.page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
+        await session.page.waitForTimeout(2_000);
+      } catch {
+        // Navigation failed — will be flagged as external below
+      }
+      applyUrl = session.page.url();
+    }
+
+    // External if we left seek.com.au, OR if click-through failed and we're still on /apply/external
+    const is_external_portal =
+      !applyUrl.includes('seek.com.au') ||
+      (applyUrl.includes('seek.com.au') && applyUrl.includes('/apply/external'));
+    const portal_type = is_external_portal ? detectPortalType(applyUrl) : null;
 
     return ok({ apply_url: applyUrl, is_external_portal, portal_type });
   });
@@ -380,9 +419,14 @@ function isLoginUrl(url: string): boolean {
 
 function detectPortalType(url: string): string {
   if (url.includes('workday.com')) return 'workday';
+  if (url.includes('myworkdayjobs.com')) return 'workday';
   if (url.includes('greenhouse.io')) return 'greenhouse';
   if (url.includes('lever.co')) return 'lever';
   if (url.includes('icims.com')) return 'icims';
   if (url.includes('successfactors.com')) return 'successfactors';
+  if (url.includes('smartrecruiters.com')) return 'smartrecruiters';
+  if (url.includes('jobvite.com')) return 'jobvite';
+  if (url.includes('taleo.net')) return 'taleo';
+  if (url.includes('bamboohr.com')) return 'bamboohr';
   return 'unknown';
 }

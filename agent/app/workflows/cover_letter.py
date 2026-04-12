@@ -23,6 +23,26 @@ from typing import Any, Literal
 log = logging.getLogger("cover_letter")
 
 from langgraph.graph import StateGraph, END
+
+_TITLE_WORDS = {
+    "recruiter", "recruitment", "manager", "team", "hr", "hiring",
+    "talent", "acquisition", "coordinator", "specialist", "officer",
+    "department", "admin", "administrator", "contact", "enquiries",
+}
+
+def _is_real_name(value: str) -> bool:
+    """Return True only if value looks like a person's name, not a job title or team."""
+    if not value or not value.strip():
+        return False
+    lower = value.strip().lower()
+    # Reject if any word is a known title/team word
+    words = re.split(r"[\s,]+", lower)
+    if any(w in _TITLE_WORDS for w in words):
+        return False
+    # Must contain at least one letter-only word (a name, not an email/number)
+    if not any(re.match(r"^[a-z]+$", w) for w in words):
+        return False
+    return True
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 
@@ -43,12 +63,19 @@ class CoverLetterState(BaseModel):
     headline: str
     summary: str
     personal_statement: str
+    narrative_strengths_text: str  # pre-written evidence sentences grounded in real work
     experience_text: str
     projects_text: str
     skills: str
 
     tone: str = "consultative, senior, practical"
     max_words: int = 320
+
+    # Pre-populated from cache (skips parse_jd LLM call when set)
+    cached_must_have: list[str] = Field(default_factory=list)
+    cached_duties: list[str] = Field(default_factory=list)
+    cached_nice_to_have: list[str] = Field(default_factory=list)
+    cached_contact_name: str = ""
 
     # Intermediate outputs
     contact_name: str = ""         # hiring manager name if found in JD
@@ -72,6 +99,7 @@ class CoverLetterResult(BaseModel):
     is_suitable: bool
     cover_letter: str = ""          # empty when not suitable
     gaps: list[str] = Field(default_factory=list)   # populated when not suitable
+    evidence: str = ""              # match evidence lines: [STRONG/MODERATE/WEAK] req → proof
 
 
 # ── Graph ──────────────────────────────────────────────────────────────────
@@ -85,8 +113,19 @@ def build_cover_letter_graph(settings: Settings) -> Any:
     # ── Node 1: parse_jd ───────────────────────────────────────────────────
     async def parse_jd(state: CoverLetterState) -> dict:
         """Split the JD into must-have requirements vs duties vs nice-to-have.
-        This is a general structural step that works for any JD format.
-        Downstream nodes only see the requirements section."""
+        Uses pre-parsed cache when available, otherwise calls the LLM."""
+        if state.cached_must_have:
+            log.info("[parse_jd] cache hit job=%s must_have=%d duties=%d nice_to_have=%d",
+                     state.job_title, len(state.cached_must_have),
+                     len(state.cached_duties), len(state.cached_nice_to_have))
+            must_have = state.cached_must_have
+            duties = state.cached_duties
+            nice_to_have = state.cached_nice_to_have
+            contact_name = state.cached_contact_name if _is_real_name(state.cached_contact_name) else ""
+            requirements = "\n".join(f"{i+1}. {r}" for i, r in enumerate(must_have))
+            bonus = "\n".join(f"- {r}" for r in nice_to_have)
+            return {"requirements": requirements, "bonus_requirements": bonus, "contact_name": contact_name}
+
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[
@@ -100,7 +139,8 @@ def build_cover_letter_graph(settings: Settings) -> Any:
                         "Include years of experience, specific tools, technical skills, domain knowledge. "
                         "duties: what the person will actually do in the role day-to-day. "
                         "nice_to_have: bonus, preferred, or optional items explicitly marked as such. "
-                        'contact_name: the hiring manager or recruiter name if explicitly mentioned in the JD (e.g. "Contact Jane Smith"), otherwise empty string "". '
+                        'contact_name: ONLY a real person\'s name (e.g. "Jane Smith" or "Jane") if explicitly named in the JD. '
+                        'If only a job title, team name, or email address is given (e.g. "contact our Talent team", "ask the recruiter"), use "". '
                         "Return ONLY the JSON object."
                     ),
                 },
@@ -120,7 +160,8 @@ def build_cover_letter_graph(settings: Settings) -> Any:
             must_have = parsed.get("must_have", [])
             nice_to_have = parsed.get("nice_to_have", [])
             duties = parsed.get("duties", [])
-            contact_name = parsed.get("contact_name", "")
+            raw_contact = parsed.get("contact_name", "")
+            contact_name = raw_contact if _is_real_name(raw_contact) else ""
             requirements = "\n".join(f"{i+1}. {r}" for i, r in enumerate(must_have))
             bonus = "\n".join(f"- {r}" for r in nice_to_have)
         except Exception:
@@ -150,7 +191,9 @@ def build_cover_letter_graph(settings: Settings) -> Any:
         Always return a match — the fit evaluator will judge quality, not this node."""
         profile_block = f"""Name: {state.name}
 Headline: {state.headline}
-Summary: {state.summary}
+
+Narrative evidence (pre-written, grounded in real work — prefer these over raw experience lines):
+{state.narrative_strengths_text}
 
 Experience (★ = quantified metric):
 {state.experience_text}
@@ -255,64 +298,127 @@ Skills: {state.skills}"""
             "is_suitable": is_suitable,
         }
 
-    # ── Node 4: write_draft ────────────────────────────────────────────────
-    async def write_draft(state: CoverLetterState) -> dict:
-        # Only use STRONG and MODERATE evidence items
+    # ── Node 4: evaluate_and_write ─────────────────────────────────────────
+    # Runs evaluate_fit and write_draft in parallel (both need only `evidence`).
+    # Saves ~10s vs sequential execution on suitable jobs.
+    async def evaluate_and_write(state: CoverLetterState) -> dict:
+        import asyncio
+
         strong_evidence = "\n".join(
             line for line in state.evidence.splitlines()
             if "[STRONG]" in line or "[MODERATE]" in line
-        ) or state.evidence  # fallback to all if nothing tagged
-
-        # Build greeting line
-        if state.contact_name:
-            greeting = f"Hi {state.contact_name},"
-        else:
-            greeting = "Hi Recruitment Manager,"
-
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        f"Write a cover letter body in a {state.tone} tone. "
-                        f"Target {state.max_words} words. "
-                        "Use exactly 3 paragraphs separated by blank lines (\\n\\n).\n"
-                        "Paragraph 1: one direct sentence naming the specific fit — what the candidate has that this role needs.\n"
-                        "Paragraph 2: 2–3 sentences of concrete evidence from the talking points — name actual tools, "
-                        "projects, or outcomes. Be specific, not vague.\n"
-                        "Paragraph 3: 1–2 sentences on broader context or domain depth, then one short closing sentence.\n\n"
-                        "STYLE RULES — follow these strictly:\n"
-                        "- Write like a senior engineer writing a direct email, not like an AI writing a cover letter.\n"
-                        "- Vary sentence length: mix short punchy sentences with longer ones. Avoid a uniform rhythm.\n"
-                        "- Use first person naturally. Contractions are fine (I've, I'm, it's).\n"
-                        "- Be specific. Name tools, systems, team sizes, outcomes — never say 'various technologies' or 'multiple projects'.\n"
-                        "- No hyphens or dashes of any kind: do NOT use — or – or - as punctuation mid-sentence. "
-                        "Rewrite those phrases as separate sentences or use 'and', 'which', 'where', or a comma instead.\n"
-                        "- No buzzwords: do NOT use leverage, utilize, passionate, excited, dynamic, innovative, "
-                        "transformative, robust, spearhead, streamline, synergy, cutting-edge, foster, facilitate, "
-                        "thrive, impactful, drive results, or any similar corporate filler.\n"
-                        "- No self-praise: avoid 'strong communicator', 'team player', 'fast learner', 'detail-oriented'.\n"
-                        "- No greeting, no sign-off, no 'I am writing to apply'. Return ONLY the 3 paragraphs."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Write the cover letter body for {state.name} applying to "
-                        f"{state.job_title} at {state.job_company}.\n\n"
-                        f"Candidate's voice (use this to set tone and weave in naturally — "
-                        f"do not quote it directly):\n{state.personal_statement}\n\n"
-                        f"Matched talking points (use numbers/metrics where available):\n{strong_evidence}"
-                    ),
-                },
-            ],
-            temperature=0.35,
-            max_tokens=700,
         )
-        draft = response.choices[0].message.content or ""
-        log.info("[write_draft] job=%s | words=%d", state.job_title, len(draft.split()))
-        return {"draft": draft}
+        if not strong_evidence:
+            strong_evidence = state.evidence
+
+        async def _evaluate_fit() -> dict:
+            response = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You evaluate how well a candidate matches a job based on the evidence mapping provided. "
+                            "Return JSON with exactly these keys:\n"
+                            '{"fit_score": 0.0-1.0, "verdict": "suitable" or "not_suitable", '
+                            '"gaps": ["gap 1", "gap 2"]}\n'
+                            "fit_score >= 0.5 means suitable (enough evidence to write a credible letter). "
+                            "Score STRONG matches highly. MODERATE matches still count — they show transferable skills. "
+                            "Only list gaps for must-have requirements that are clearly missing. "
+                            "Do not list gaps for bonus/nice-to-have items. "
+                            "gaps should name the specific missing must-have skills/experience, max 3 items. "
+                            "Return ONLY the JSON object, no other text."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Job: {state.job_title} at {state.job_company}\n\n"
+                            f"Evidence mapping:\n{state.evidence}"
+                        ),
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=200,
+            )
+            raw = (response.choices[0].message.content or "{}").strip()
+            raw = re.sub(r"```[a-z]*\n?", "", raw).strip()
+            try:
+                import json
+                parsed = json.loads(raw)
+                fit_score = float(parsed.get("fit_score", 0.5))
+                verdict = parsed.get("verdict", "suitable")
+                gaps = parsed.get("gaps", [])
+            except Exception:
+                fit_score = 0.5
+                verdict = "suitable"
+                gaps = []
+            is_suitable = fit_score >= 0.5
+            log.info("[evaluate_fit] job=%s | score=%.2f verdict=%s suitable=%s gaps=%s",
+                     state.job_title, fit_score, verdict, is_suitable, gaps)
+            return {"fit_score": fit_score, "fit_verdict": verdict, "gaps": gaps, "is_suitable": is_suitable}
+
+        async def _write_draft() -> str:
+            response = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            f"Write a cover letter body in a {state.tone} tone. "
+                            f"Target {state.max_words} words. "
+                            "Use exactly 3 paragraphs separated by blank lines (\\n\\n).\n"
+                            "Paragraph 1: one direct sentence naming the specific fit — what the candidate has that this role needs.\n"
+                            "Paragraph 2: 2–3 sentences of concrete evidence from the talking points — name actual tools, "
+                            "projects, or outcomes. Be specific, not vague.\n"
+                            "Paragraph 3: 1–2 sentences on broader relevant experience, then one short closing sentence.\n\n"
+                            "CONTENT RULES — these override everything else:\n"
+                            "- Write ONLY about topics that appear in the job requirements. "
+                            "Do not volunteer skills or experience areas the job did not ask for, "
+                            "even if the candidate has them. Match the employer's scope, not the candidate's full breadth.\n"
+                            "- The talking points are your only source of facts. Do not invent claims or add context "
+                            "from the candidate's voice section — that section sets writing style only, not content.\n\n"
+                            "STYLE RULES:\n"
+                            "- Write like a senior engineer writing a direct email, not like an AI writing a cover letter.\n"
+                            "- Vary sentence length: mix short punchy sentences with longer ones. Avoid a uniform rhythm.\n"
+                            "- Use first person naturally. Contractions are fine (I've, I'm, it's).\n"
+                            "- Be specific. Name tools, systems, outcomes — never say 'various technologies' or 'multiple projects'.\n"
+                            "- No hyphens or dashes of any kind: do NOT use — or – or - as punctuation mid-sentence. "
+                            "Rewrite those phrases as separate sentences or use 'and', 'which', 'where', or a comma instead.\n"
+                            "- No buzzwords: do NOT use leverage, utilize, passionate, excited, dynamic, innovative, "
+                            "transformative, robust, spearhead, streamline, synergy, cutting-edge, foster, facilitate, "
+                            "thrive, impactful, drive results, or any similar corporate filler.\n"
+                            "- No self-praise: avoid 'strong communicator', 'team player', 'fast learner', 'detail-oriented'.\n"
+                            "- No greeting, no sign-off, no 'I am writing to apply'. Return ONLY the 3 paragraphs."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Write the cover letter body for {state.name} applying to "
+                            f"{state.job_title} at {state.job_company}.\n\n"
+                            f"Candidate's voice (use this to set tone — do not quote directly):\n{state.personal_statement}\n\n"
+                            f"Matched talking points — these are pre-written sentences grounded in real work. "
+                            f"Use them as the basis for your paragraphs. Adapt the phrasing but keep the substance. "
+                            f"Do not invent new claims or generalise into buzzwords:\n{strong_evidence}"
+                        ),
+                    },
+                ],
+                temperature=0.35,
+                max_tokens=500,
+            )
+            draft = response.choices[0].message.content or ""
+            log.info("[write_draft] job=%s | words=%d", state.job_title, len(draft.split()))
+            return draft
+
+        fit_result, draft = await asyncio.gather(_evaluate_fit(), _write_draft())
+
+        if not fit_result["is_suitable"]:
+            # Job is not suitable — discard the draft we speculatively generated
+            log.info("[evaluate_and_write] job=%s not suitable, discarding draft", state.job_title)
+            return {**fit_result, "draft": ""}
+
+        return {**fit_result, "draft": draft}
 
     # ── Node 5: check_length ───────────────────────────────────────────────
     def check_length(state: CoverLetterState) -> dict:
@@ -346,8 +452,8 @@ Skills: {state.skills}"""
         # Strip any em/en dashes that slipped through
         body = body.replace("—", ",").replace("–", ",")
 
-        # Build greeting
-        if state.contact_name:
+        # Build greeting — only use contact_name if it's a real person's name
+        if _is_real_name(state.contact_name):
             greeting = f"Hi {state.contact_name},"
         else:
             greeting = "Hi Recruitment Manager,"
@@ -357,23 +463,21 @@ Skills: {state.skills}"""
 
         return {"cover_letter": cover_letter, "word_count": len(body.split())}
 
-    # ── Routing ────────────────────────────────────────────────────────────
-    def route_after_evaluate(state: CoverLetterState) -> Literal["write_draft", "__end__"]:
-        return "write_draft" if state.is_suitable else END
-
     # ── Assemble ───────────────────────────────────────────────────────────
     graph = StateGraph(CoverLetterState)
     graph.add_node("parse_jd", parse_jd)
     graph.add_node("match_profile", match_profile)
-    graph.add_node("evaluate_fit", evaluate_fit)
-    graph.add_node("write_draft", write_draft)
+    graph.add_node("evaluate_and_write", evaluate_and_write)
     graph.add_node("check_length", check_length)
 
     graph.set_entry_point("parse_jd")
     graph.add_edge("parse_jd", "match_profile")
-    graph.add_edge("match_profile", "evaluate_fit")
-    graph.add_conditional_edges("evaluate_fit", route_after_evaluate)
-    graph.add_edge("write_draft", "check_length")
+    graph.add_edge("match_profile", "evaluate_and_write")
+
+    def route_after_evaluate_and_write(state: CoverLetterState) -> Literal["check_length", "__end__"]:
+        return "check_length" if state.is_suitable else END
+
+    graph.add_conditional_edges("evaluate_and_write", route_after_evaluate_and_write)
     graph.add_edge("check_length", END)
 
     return graph.compile()
@@ -404,6 +508,13 @@ def _format_projects(profile: dict) -> str:
     return "\n".join(lines) or "None listed"
 
 
+def _format_narrative_strengths(profile: dict) -> str:
+    items = profile.get("narrative_strengths", [])
+    if not items:
+        return ""
+    return "\n".join(f"- {s}" for s in items)
+
+
 # ── Public entry point ─────────────────────────────────────────────────────
 
 async def run_cover_letter(
@@ -411,23 +522,29 @@ async def run_cover_letter(
     *,
     job: SeekJobDetail,
     profile: dict,
+    cached_analysis=None,
 ) -> CoverLetterResult:
     prefs = profile.get("proposal_preferences", {})
 
     initial = CoverLetterState(
         job_title=job.title,
         job_company=job.company,
-        job_description=job.description,
+        job_description=cached_analysis.description if cached_analysis and cached_analysis.description else job.description,
         job_salary=job.salary,
         name=profile.get("name", ""),
         headline=profile.get("headline", ""),
         summary=profile.get("summary", ""),
         personal_statement=profile.get("personal_statement", ""),
+        narrative_strengths_text=_format_narrative_strengths(profile),
         experience_text=_format_experience(profile),
         projects_text=_format_projects(profile),
         skills=", ".join(profile.get("core_strengths", [])),
         tone=prefs.get("tone", "consultative, senior, practical"),
         max_words=prefs.get("max_words", 320),
+        cached_must_have=cached_analysis.must_have if cached_analysis else [],
+        cached_duties=cached_analysis.duties if cached_analysis else [],
+        cached_nice_to_have=cached_analysis.nice_to_have if cached_analysis else [],
+        cached_contact_name=cached_analysis.contact_name if cached_analysis else "",
     )
 
     graph = build_cover_letter_graph(settings)
@@ -438,4 +555,5 @@ async def run_cover_letter(
         is_suitable=state.is_suitable,
         cover_letter=state.cover_letter,
         gaps=state.gaps,
+        evidence=state.evidence,
     )

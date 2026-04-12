@@ -16,6 +16,7 @@ export const jobSchema = z.object({
   location: z.string().nullable(),
   summary: z.string().nullable(),
   payload: z.record(z.unknown()),
+  state: z.string().default("discovered"),
   discovered_at: z.string(),
   last_seen_at: z.string(),
 });
@@ -70,9 +71,11 @@ export const applicationDetailSchema = z.object({
 export const prepareResponseSchema = z.object({
   application_id: z.string(),
   cover_letter: z.string(),
+  job_description: z.string().default(""),
   questions: z.array(z.object({ question: z.string(), answer: z.string() })),
   is_suitable: z.boolean().optional(),
   gaps: z.array(z.string()).optional(),
+  match_evidence: z.string().default(""),
 });
 export type PrepareResponse = z.infer<typeof prepareResponseSchema>;
 
@@ -100,11 +103,23 @@ export const stepInfoSchema = z.object({
 });
 export type StepInfo = z.infer<typeof stepInfoSchema>;
 
+const stepHistoryEntrySchema = z.object({
+  step: z.object({
+    page_url: z.string(),
+    fields: z.array(fieldInfoSchema).optional().default([]),
+    visible_actions: z.array(z.string()).optional().default([]),
+  }).passthrough(),
+  filled_values: z.record(z.string()),
+});
+export type StepHistoryEntry = z.infer<typeof stepHistoryEntrySchema>;
+
 export const applyStepResponseSchema = z.object({
   workflow_run_id: z.string(),
   status: z.string(),
   step: stepInfoSchema.nullable().optional(),
   proposed_values: z.record(z.string()),
   low_confidence_ids: z.array(z.string()).optional(),
+  submit_action_label: z.string().optional().default("Continue"),
+  step_history: z.array(stepHistoryEntrySchema).optional().default([]),
 });
 export type ApplyStepResponse = z.infer<typeof applyStepResponseSchema>;

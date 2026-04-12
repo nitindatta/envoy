@@ -22,6 +22,7 @@ from langgraph.graph import StateGraph, END
 log = logging.getLogger("prepare")
 
 from app.persistence.sqlite.applications import SqliteApplicationRepository, SqliteDraftRepository
+from app.persistence.sqlite.job_analysis import SqliteJobAnalysisRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.services.ai import predict_questions
 from app.settings import Settings
@@ -37,6 +38,7 @@ def build_prepare_graph(
     job_repo: SqliteJobRepository,
     app_repo: SqliteApplicationRepository,
     draft_repo: SqliteDraftRepository,
+    analysis_repo: SqliteJobAnalysisRepository | None = None,
 ):
     profile = _load_profile(settings)
 
@@ -64,29 +66,32 @@ def build_prepare_graph(
             log.warning("[generate] skipping — error=%s detail=%s", state.error, state.detail)
             return {}
 
-        log.info("[generate] starting cover letter + Q&A for job=%s", state.detail.title)
+        # Look up pre-parsed JD analysis from cache
+        cached = None
+        if analysis_repo is not None:
+            cached = await analysis_repo.get(state.job_id)
+            if cached:
+                log.info("[generate] using cached JD analysis for job=%s (skipping parse_jd LLM call)", state.detail.title)
+            else:
+                log.info("[generate] no cached analysis for job=%s, parse_jd will run", state.detail.title)
+
+        log.info("[generate] starting cover letter for job=%s", state.detail.title)
         cl_result = await run_cover_letter(
-            settings, job=state.detail, profile=profile
+            settings, job=state.detail, profile=profile, cached_analysis=cached
         )
-        log.info("[generate] cover_letter: suitable=%s gaps=%s words=%d",
-                 cl_result.is_suitable, cl_result.gaps, len(cl_result.cover_letter.split()))
-        questions = await predict_questions(
-            settings, job=state.detail, profile=profile
-        )
-        log.info("[generate] done: questions=%d", len(questions))
+        log.info("[generate] cover_letter: suitable=%s gaps=%s words=%d evidence_lines=%d",
+                 cl_result.is_suitable, cl_result.gaps, len(cl_result.cover_letter.split()),
+                 len(cl_result.evidence.splitlines()))
         return {
             "cover_letter": cl_result.cover_letter,
             "is_suitable": cl_result.is_suitable,
             "gaps": cl_result.gaps,
-            "questions": questions,
+            "match_evidence": cl_result.evidence,
         }
 
     async def persist(state: PrepareState) -> dict[str, Any]:
         if state.error:
             log.warning("[persist] skipping — error=%s", state.error)
-            return {}
-        if not state.is_suitable:
-            log.info("[persist] skipping — not suitable (gaps=%s)", state.gaps)
             return {}
 
         job = await job_repo.get(state.job_id)
@@ -98,8 +103,22 @@ def build_prepare_graph(
             job_id=state.job_id,
             source_provider=job.provider,
             source_url=job.source_url,
+            is_suitable=state.is_suitable,
+            gaps=state.gaps,
         )
-        log.info("[persist] created application_id=%s for job=%s", app_id, state.job_id)
+        log.info("[persist] created application_id=%s for job=%s suitable=%s", app_id, state.job_id, state.is_suitable)
+
+        if not state.is_suitable:
+            log.info("[persist] not suitable — skipping drafts (gaps=%s)", state.gaps)
+            # Still save match_evidence so cache-hit path can return it
+            if state.match_evidence:
+                await draft_repo.create(
+                    application_id=app_id,
+                    draft_type="match_evidence",
+                    generator=settings.openai_model,
+                    content=state.match_evidence,
+                )
+            return {"application_id": app_id}
 
         await draft_repo.create(
             application_id=app_id,
@@ -107,6 +126,14 @@ def build_prepare_graph(
             generator=settings.openai_model,
             content=state.cover_letter,
         )
+
+        if state.match_evidence:
+            await draft_repo.create(
+                application_id=app_id,
+                draft_type="match_evidence",
+                generator=settings.openai_model,
+                content=state.match_evidence,
+            )
 
         for qa in state.questions:
             import hashlib
@@ -142,10 +169,28 @@ async def run_prepare(
     job_repo: SqliteJobRepository,
     app_repo: SqliteApplicationRepository,
     draft_repo: SqliteDraftRepository,
+    analysis_repo: SqliteJobAnalysisRepository | None = None,
     *,
     job_id: str,
 ) -> PrepareState:
-    graph = build_prepare_graph(settings, tool_client, job_repo, app_repo, draft_repo)
+    # Return cached result if an active (non-discarded) application already exists
+    cached = await app_repo.get_active_by_job_id(job_id)
+    if cached:
+        app_id, is_suitable, gaps = cached
+        cover_letter = await draft_repo.get_cover_letter(app_id)
+        match_evidence = await draft_repo.get_match_evidence(app_id)
+        log.info("[run_prepare] cache hit job_id=%s application_id=%s", job_id, app_id)
+        return PrepareState(
+            job_id=job_id,
+            application_id=app_id,
+            cover_letter=cover_letter,
+            match_evidence=match_evidence,
+            is_suitable=is_suitable,
+            gaps=gaps,
+            detail=None,  # not needed for response
+        )
+
+    graph = build_prepare_graph(settings, tool_client, job_repo, app_repo, draft_repo, analysis_repo)
     initial = PrepareState(job_id=job_id)
     result = await graph.ainvoke(initial)
     return PrepareState.model_validate(result)

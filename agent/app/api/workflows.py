@@ -2,6 +2,9 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
+from pydantic import BaseModel
+
+from app.services.ai import predict_questions
 from app.state.apply import ApplyRequest, ApplyResumeRequest, ApplyStepResponse
 from app.state.jobs import SearchRequest, SearchResponse
 from app.state.prepare import PrepareRequest, PrepareResponse
@@ -23,6 +26,7 @@ async def start_prepare(request: Request, body: PrepareRequest) -> PrepareRespon
             request.app.state.job_repository,
             request.app.state.application_repository,
             request.app.state.draft_repository,
+            request.app.state.job_analysis_repository,
             job_id=body.job_id,
         )
     except SeekDetailDriftError as exc:
@@ -33,13 +37,58 @@ async def start_prepare(request: Request, body: PrepareRequest) -> PrepareRespon
     if state.error:
         raise HTTPException(status_code=422, detail=state.error)
 
+    # Job description: from workflow detail, or fall back to job_analysis cache
+    job_description = ""
+    if state.detail:
+        job_description = state.detail.description
+    else:
+        analysis = await request.app.state.job_analysis_repository.get(body.job_id)
+        if analysis:
+            job_description = analysis.description
+
     return PrepareResponse(
         application_id=state.application_id,
         cover_letter=state.cover_letter,
+        job_description=job_description,
         questions=state.questions,
         is_suitable=state.is_suitable,
         gaps=state.gaps,
+        match_evidence=state.match_evidence,
     )
+
+
+class QuestionsRequest(BaseModel):
+    application_id: str
+
+
+class QuestionsResponse(BaseModel):
+    questions: list[dict[str, str]]
+
+
+@router.post("/workflows/questions", response_model=QuestionsResponse)
+async def generate_questions(request: Request, body: QuestionsRequest) -> QuestionsResponse:
+    import json
+    app_repo = request.app.state.application_repository
+    job_repo = request.app.state.job_repository
+    draft_repo = request.app.state.draft_repository
+
+    app = await app_repo.get(body.application_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    job = await job_repo.get(app.job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    settings = request.app.state.settings
+    profile = json.loads((settings.resolved_profile_path).read_text(encoding="utf-8"))
+
+    from app.tools.seek_detail import fetch_job_detail
+    provider_job_id = str(job.payload.get("provider_job_id", ""))
+    detail = await fetch_job_detail(request.app.state.tool_client, job_id=provider_job_id)
+
+    questions = await predict_questions(settings, job=detail, profile=profile)
+    return QuestionsResponse(questions=questions)
 
 
 @router.post("/workflows/apply", response_model=ApplyStepResponse)
@@ -65,6 +114,8 @@ async def start_apply(request: Request, body: ApplyRequest) -> ApplyStepResponse
         step=state.current_step,
         proposed_values=state.proposed_values,
         low_confidence_ids=state.low_confidence_ids,
+        submit_action_label=state.submit_action_label,
+        step_history=state.step_history,
     )
 
 
@@ -90,6 +141,8 @@ async def resume_apply_run(run_id: str, request: Request, body: ApplyResumeReque
         step=state.current_step,
         proposed_values=state.proposed_values,
         low_confidence_ids=state.low_confidence_ids,
+        submit_action_label=state.submit_action_label,
+        step_history=state.step_history,
     )
 
 

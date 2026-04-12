@@ -43,8 +43,11 @@ class ApplyState(BaseModel):
     # Accumulation
     step_history: list[dict] = Field(default_factory=list)
 
+    # Pre-submit pause
+    submit_action_label: str = "Continue"  # label of the final Submit button on SEEK
+
     # Terminal state
-    status: str = "running"  # running | paused | completed | failed | aborted
+    status: str = "running"  # running | paused | awaiting_submit | completed | failed | aborted
     error: str | None = None
     pause_reason: str | None = None  # auth_required | drift | etc.
 
@@ -57,10 +60,12 @@ class ApplyStepResponse(BaseModel):
     """Returned when workflow pauses at an interrupt."""
 
     workflow_run_id: str
-    status: str  # paused | completed | failed | aborted
+    status: str  # paused | awaiting_submit | completed | failed | aborted
     step: StepInfo | None = None
     proposed_values: dict[str, str] = Field(default_factory=dict)
     low_confidence_ids: list[str] = Field(default_factory=list)
+    submit_action_label: str = "Continue"
+    step_history: list[dict] = Field(default_factory=list)
 
 
 class ApplyResumeRequest(BaseModel):

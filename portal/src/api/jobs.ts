@@ -6,10 +6,21 @@ import {
   type SearchResponse,
 } from "./schemas";
 
-export async function fetchJobs(provider?: string): Promise<Job[]> {
-  const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+export async function fetchJobs(opts?: { provider?: string; state?: string }): Promise<Job[]> {
+  const params = new URLSearchParams();
+  if (opts?.provider) params.set("provider", opts.provider);
+  if (opts?.state) params.set("state", opts.state);
+  const query = params.toString() ? `?${params.toString()}` : "";
   const raw = await apiFetch<unknown>(`/jobs${query}`);
   return jobListSchema.parse(raw).jobs;
+}
+
+export async function queueJob(jobId: string): Promise<void> {
+  await apiFetch<unknown>(`/jobs/${jobId}/queue`, { method: "POST" });
+}
+
+export async function ignoreJob(jobId: string): Promise<void> {
+  await apiFetch<unknown>(`/jobs/${jobId}/ignore`, { method: "POST" });
 }
 
 export interface SearchPayload {

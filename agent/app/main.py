@@ -24,6 +24,7 @@ from app.api.jobs import router as jobs_router
 from app.api.workflows import router as workflows_router
 from app.persistence.sqlite.applications import SqliteApplicationRepository, SqliteDraftRepository
 from app.persistence.sqlite.connection import Database
+from app.persistence.sqlite.job_analysis import SqliteJobAnalysisRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.persistence.sqlite.workflow_runs import SqliteWorkflowRunRepository, SqliteBrowserSessionRepository
 from app.settings import get_settings
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     database = await Database.open(settings.resolved_sqlite_path)
     app.state.database = database
     app.state.job_repository = SqliteJobRepository(database.connection)
+    app.state.job_analysis_repository = SqliteJobAnalysisRepository(database.connection)
     app.state.application_repository = SqliteApplicationRepository(database.connection)
     app.state.draft_repository = SqliteDraftRepository(database.connection)
     app.state.workflow_run_repository = SqliteWorkflowRunRepository(database.connection)

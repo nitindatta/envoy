@@ -28,6 +28,7 @@ def _row_to_job(row: aiosqlite.Row) -> Job:
         location=row["location"],
         summary=row["summary"],
         payload=json.loads(row["payload_json"]),
+        state=row["state"] if "state" in row.keys() else "discovered",
         discovered_at=datetime.fromisoformat(row["discovered_at"]),
         last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
     )
@@ -120,20 +121,39 @@ class SqliteJobRepository:
         await cursor.close()
         return _row_to_job(row) if row else None
 
-    async def list_by_provider(self, provider: str, limit: int = 50) -> list[Job]:
-        cursor = await self._db.execute(
-            "SELECT * FROM jobs WHERE provider = ? ORDER BY discovered_at DESC LIMIT ?",
-            (provider, limit),
+    async def update_state(self, job_id: str, state: str) -> None:
+        await self._db.execute(
+            "UPDATE jobs SET state = ? WHERE id = ?",
+            (state, job_id),
         )
+        await self._db.commit()
+
+    async def list_by_provider(self, provider: str, limit: int = 50, state: str | None = None) -> list[Job]:
+        if state:
+            cursor = await self._db.execute(
+                "SELECT * FROM jobs WHERE provider = ? AND state = ? ORDER BY discovered_at DESC LIMIT ?",
+                (provider, state, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM jobs WHERE provider = ? ORDER BY discovered_at DESC LIMIT ?",
+                (provider, limit),
+            )
         rows = await cursor.fetchall()
         await cursor.close()
         return [_row_to_job(row) for row in rows]
 
-    async def list_all(self, limit: int = 50) -> list[Job]:
-        cursor = await self._db.execute(
-            "SELECT * FROM jobs ORDER BY discovered_at DESC LIMIT ?",
-            (limit,),
-        )
+    async def list_all(self, limit: int = 50, state: str | None = None) -> list[Job]:
+        if state:
+            cursor = await self._db.execute(
+                "SELECT * FROM jobs WHERE state = ? ORDER BY discovered_at DESC LIMIT ?",
+                (state, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM jobs ORDER BY discovered_at DESC LIMIT ?",
+                (limit,),
+            )
         rows = await cursor.fetchall()
         await cursor.close()
         return [_row_to_job(row) for row in rows]

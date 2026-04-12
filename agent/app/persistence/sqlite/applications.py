@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any
 
 import aiosqlite
 
@@ -26,6 +25,8 @@ class SqliteApplicationRepository:
         job_id: str,
         source_provider: str,
         source_url: str,
+        is_suitable: bool = True,
+        gaps: list[str] | None = None,
     ) -> str:
         app_id = str(uuid.uuid4())
         now = _now()
@@ -33,10 +34,11 @@ class SqliteApplicationRepository:
             """
             INSERT INTO applications
                 (id, job_id, source_provider, source_url, state,
-                 approval_required, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'prepared', 1, ?, ?)
+                 approval_required, is_suitable, gaps_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'prepared', 1, ?, ?, ?, ?)
             """,
-            (app_id, job_id, source_provider, source_url, now, now),
+            (app_id, job_id, source_provider, source_url,
+             1 if is_suitable else 0, json.dumps(gaps or []), now, now),
         )
         await self._conn.commit()
         return app_id
@@ -58,14 +60,24 @@ class SqliteApplicationRepository:
         if row is None:
             return None
         return Application(
-            id=row[0],
-            job_id=row[1],
-            source_provider=row[2],
-            source_url=row[3],
-            state=row[4],
+            id=row[0], job_id=row[1], source_provider=row[2],
+            source_url=row[3], state=row[4],
             created_at=datetime.fromisoformat(row[5]),
             updated_at=datetime.fromisoformat(row[6]),
         )
+
+    async def get_active_by_job_id(self, job_id: str) -> tuple[str, bool, list[str]] | None:
+        """Return (application_id, is_suitable, gaps) for the latest non-discarded application, or None."""
+        async with self._conn.execute(
+            "SELECT id, is_suitable, gaps_json FROM applications "
+            "WHERE job_id = ? AND state NOT IN ('discarded') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (job_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        return row[0], bool(row[1]), json.loads(row[2])
 
     async def list_all(self, limit: int = 50, state: str | None = None) -> list[Application]:
         if state:
@@ -84,11 +96,8 @@ class SqliteApplicationRepository:
             rows = await cur.fetchall()
         return [
             Application(
-                id=r[0],
-                job_id=r[1],
-                source_provider=r[2],
-                source_url=r[3],
-                state=r[4],
+                id=r[0], job_id=r[1], source_provider=r[2],
+                source_url=r[3], state=r[4],
                 created_at=datetime.fromisoformat(r[5]),
                 updated_at=datetime.fromisoformat(r[6]),
             )
@@ -130,6 +139,26 @@ class SqliteDraftRepository:
         )
         await self._conn.commit()
 
+    async def get_cover_letter(self, application_id: str) -> str:
+        """Return the latest cover letter content for an application, or empty string."""
+        async with self._conn.execute(
+            "SELECT content FROM drafts WHERE application_id = ? AND draft_type = 'cover_letter' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (application_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else ""
+
+    async def get_match_evidence(self, application_id: str) -> str:
+        """Return the match evidence text for an application, or empty string."""
+        async with self._conn.execute(
+            "SELECT content FROM drafts WHERE application_id = ? AND draft_type = 'match_evidence' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (application_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else ""
+
     async def list_for_application(self, application_id: str) -> list[Draft]:
         async with self._conn.execute(
             "SELECT id, application_id, draft_type, question_fingerprint, "
@@ -140,13 +169,9 @@ class SqliteDraftRepository:
             rows = await cur.fetchall()
         return [
             Draft(
-                id=r[0],
-                application_id=r[1],
-                draft_type=r[2],
-                question_fingerprint=r[3],
-                generator=r[4],
-                content=r[5],
-                version=r[6],
+                id=r[0], application_id=r[1], draft_type=r[2],
+                question_fingerprint=r[3], generator=r[4],
+                content=r[5], version=r[6],
                 created_at=datetime.fromisoformat(r[7]),
             )
             for r in rows

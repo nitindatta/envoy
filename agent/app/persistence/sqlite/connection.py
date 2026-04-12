@@ -38,7 +38,22 @@ class Database:
 
 
 async def _apply_migrations(connection: aiosqlite.Connection) -> None:
+    await connection.executescript(
+        "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);"
+    )
+    await connection.commit()
+
+    applied_cursor = await connection.execute("SELECT name FROM _migrations")
+    applied = {row[0] for row in await applied_cursor.fetchall()}
+    await applied_cursor.close()
+
     for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        if migration.name in applied:
+            continue
         sql = migration.read_text(encoding="utf-8")
         await connection.executescript(sql)
-    await connection.commit()
+        await connection.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES (?, datetime('now'))",
+            (migration.name,),
+        )
+        await connection.commit()

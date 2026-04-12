@@ -32,30 +32,23 @@ export type InspectResult =
 
 export async function inspectStep(page: Page): Promise<InspectResult> {
   const url = page.url();
+  // External if we're off seek.com.au entirely, or still on SEEK's own /apply/external redirect stub
+  const is_external_portal =
+    !url.includes('seek.com.au') ||
+    (url.includes('seek.com.au') && url.includes('/apply/external'));
+  const portal_type = is_external_portal ? detectPortalType(url) : null;
 
-  // Detect external redirect
-  const is_external_portal = !url.includes('seek.com.au');
+  // Wait for the page to settle on external portals (they often render async)
   if (is_external_portal) {
-    return {
-      ok: true,
-      step: {
-        page_url: url,
-        page_type: 'external_redirect',
-        step_index: null,
-        total_steps_estimate: null,
-        is_external_portal: true,
-        portal_type: detectPortalType(url),
-        fields: [],
-        visible_actions: [],
-      },
-    };
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
   }
 
-  // Detect confirmation page
+  // Detect confirmation page (works on any domain)
   const pageText = await page.evaluate(() => document.body.innerText).catch(() => '');
   if (
-    /application (submitted|received|successful)/i.test(pageText) ||
-    /thank you for applying/i.test(pageText)
+    /application (submitted|received|successful|complete)/i.test(pageText) ||
+    /thank you for applying/i.test(pageText) ||
+    /your application has been (submitted|received)/i.test(pageText)
   ) {
     return {
       ok: true,
@@ -64,8 +57,8 @@ export async function inspectStep(page: Page): Promise<InspectResult> {
         page_type: 'confirmation',
         step_index: null,
         total_steps_estimate: null,
-        is_external_portal: false,
-        portal_type: null,
+        is_external_portal,
+        portal_type,
         fields: [],
         visible_actions: [],
       },
@@ -90,19 +83,38 @@ export async function inspectStep(page: Page): Promise<InspectResult> {
     if (m && m[1] && m[2]) { step_index = parseInt(m[1]); total_steps_estimate = parseInt(m[2]); }
   }
 
-  // Extract form fields
+  // Extract form fields (generic — works on any site using standard HTML inputs)
   const fields = await extractFields(page);
 
   // Extract visible action buttons
+  const _noisePatterns = /^(open app|get app|download|sign in|log in|back|cancel|close|dismiss)$/i;
   const actionButtons = await page
     .locator('button[type="submit"], button[type="button"], input[type="submit"]')
     .all();
   const visible_actions: string[] = [];
   for (const btn of actionButtons) {
     const raw = (await btn.textContent())?.trim() ?? '';
-    // Strip zero-width characters injected by some UIs (U+2060 word joiner, etc.)
     const text = raw.replace(/[\u2060\u200b\u200c\u200d\uFEFF]/g, '').trim();
-    if (text && !visible_actions.includes(text)) visible_actions.push(text);
+    if (text && !visible_actions.includes(text) && !_noisePatterns.test(text))
+      visible_actions.push(text);
+  }
+
+  // External portal with no extractable fields — the ATS uses non-standard rendering
+  // (e.g. Workday shadow DOM). Fall back to manual.
+  if (is_external_portal && fields.length === 0 && visible_actions.length === 0) {
+    return {
+      ok: true,
+      step: {
+        page_url: url,
+        page_type: 'external_redirect',
+        step_index: null,
+        total_steps_estimate: null,
+        is_external_portal: true,
+        portal_type,
+        fields: [],
+        visible_actions: [],
+      },
+    };
   }
 
   return {
@@ -112,8 +124,8 @@ export async function inspectStep(page: Page): Promise<InspectResult> {
       page_type: 'form',
       step_index,
       total_steps_estimate,
-      is_external_portal: false,
-      portal_type: null,
+      is_external_portal,
+      portal_type,
       fields,
       visible_actions,
     },

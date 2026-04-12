@@ -56,7 +56,8 @@ async def approve_application(app_id: str, request: Request, body: ApproveReques
     app = await repo.get(app_id)
     if app is None:
         raise HTTPException(status_code=404, detail="application not found")
-    if app.state not in ("prepared",):
+    _APPROVABLE = {"prepared", "approved", "paused", "failed"}
+    if app.state not in _APPROVABLE:
         raise HTTPException(status_code=409, detail=f"cannot approve from state '{app.state}'")
 
     # Persist edited cover letter if provided
@@ -78,3 +79,17 @@ async def discard_application(app_id: str, request: Request):
         raise HTTPException(status_code=404, detail="application not found")
     await repo.update_state(app_id, "discarded")
     return {"application_id": app_id, "state": "discarded"}
+
+
+@router.post("/applications/{app_id}/mark_submitted", response_model=dict)
+async def mark_submitted(app_id: str, request: Request):
+    """Mark an application as submitted — used when the portal redirected to an external ATS."""
+    repo: SqliteApplicationRepository = request.app.state.application_repository
+    job_repo = request.app.state.job_repository
+    app = await repo.get(app_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="application not found")
+    await repo.update_state(app_id, "applied")
+    # Move the job out of review so it doesn't show on the Review Desk
+    await job_repo.update_state(app.job_id, "ignored")
+    return {"application_id": app_id, "state": "applied"}

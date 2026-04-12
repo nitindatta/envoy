@@ -64,7 +64,19 @@ def _lookup_from_profile(field: FieldInfo, profile: dict) -> str | None:
     for key, resolver in _PROFILE_FIELD_MAP.items():
         if key in label_lower and resolver is not None:
             value = resolver(profile)
-            return value if value else None
+            if not value:
+                return None
+            # For select fields, validate the value matches one of the available options.
+            # If not, return None so the caller falls through to LLM with the options context.
+            if field.field_type == "select" and field.options:
+                options_lower = [o.lower() for o in field.options]
+                if value.lower() not in options_lower:
+                    log.debug(
+                        "[profile] select value %r not in options for label=%r — falling through",
+                        value, field.label,
+                    )
+                    return None
+            return value
     return None
 
 
@@ -111,23 +123,50 @@ async def _resolve_via_llm(
         "Pick the option most appropriate for the candidate."
     ) if is_radio_group else ""
 
+    # Build a richer profile block so the LLM can answer screening questions accurately
+    exp_lines = []
+    for exp in profile.get("experience", [])[:4]:
+        techs = exp.get("technologies", []) + exp.get("skills", [])
+        line = f"- {exp.get('title','')} at {exp.get('company','')} ({exp.get('period','')})"
+        if techs:
+            line += f": {', '.join(techs[:8])}"
+        exp_lines.append(line)
+    experience_block = "\n".join(exp_lines) or "Not provided"
+
+    skills_block = ", ".join(profile.get("core_strengths", []))
+    narrative_block = "\n".join(
+        f"- {s}" for s in profile.get("narrative_strengths", [])[:5]
+    )
+
     system = (
         "You are filling out a job application form on behalf of a candidate. "
-        "Answer each question accurately based on the candidate's profile. "
-        "Be concise. For yes/no questions answer exactly 'Yes' or 'No'. "
-        "Return JSON: {\"answer\": \"...\", \"confidence\": 0.0-1.0}"
+        "Answer each question accurately based solely on the candidate's profile below. "
+        "For yes/no or radio questions: pick the option that is most truthful given the candidate's experience. "
+        "If the candidate clearly does NOT have the stated experience, answer 'No'. "
+        "Set confidence < 0.6 if you are genuinely unsure. "
+        "Return JSON only: {\"answer\": \"...\", \"confidence\": 0.0-1.0}"
     )
     user = f"""Form field: {field.label}
 Field type: {field.field_type}{options_text}
 Required: {field.required}
 {radio_instruction}
-Candidate profile (summary):
+
+Candidate profile:
 Name: {profile.get('name')}
 Location: {profile.get('location')}
 Summary: {profile.get('summary', '')[:300]}
-Cover letter excerpt: {cover_letter[:500] if cover_letter else 'N/A'}
 
-Answer this field for the candidate. Return only JSON."""
+Experience:
+{experience_block}
+
+Skills: {skills_block}
+
+Key achievements:
+{narrative_block}
+
+Cover letter excerpt: {cover_letter[:400] if cover_letter else 'N/A'}
+
+Answer this field truthfully for the candidate. Return only JSON."""
 
     response = await client.chat.completions.create(
         model=settings.openai_model,
@@ -179,7 +218,7 @@ async def propose_field_values(
             log.debug("[field:%s] label=%r → cover_letter (%d words)", field.id, field.label, len(cover_letter.split()))
             continue
 
-        # Radio groups: cover letter → always "Write a cover letter"; all others → keep default
+        # Radio groups: cover letter → force "Write a cover letter"
         if field.field_type == "radio":
             if "cover letter" in label_lower and field.options:
                 write_opt = next((o for o in field.options if "write" in o.lower()), None)
@@ -187,13 +226,12 @@ async def propose_field_values(
                     proposed[field.id] = write_opt
                     log.debug("[field:%s] label=%r → radio force=%r", field.id, field.label, write_opt)
                     continue
-            # All other radio groups: keep whatever SEEK already has selected
+            # If already has a pre-selected value, keep it (SEEK sometimes pre-fills)
             if field.current_value:
                 proposed[field.id] = field.current_value
                 log.debug("[field:%s] label=%r → radio keep default=%r", field.id, field.label, field.current_value)
-            else:
-                log.debug("[field:%s] label=%r → radio no default, skipping", field.id, field.label)
-            continue
+                continue
+            # No default — screening question, must answer via LLM (fall through below)
 
         # 1. Profile lookup
         value = _lookup_from_profile(field, profile)

@@ -1,0 +1,2 @@
+ALTER TABLE applications ADD COLUMN is_suitable INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE applications ADD COLUMN gaps_json TEXT NOT NULL DEFAULT '[]';

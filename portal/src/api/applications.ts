@@ -61,3 +61,29 @@ export async function resumeApply(
   });
   return applyStepResponseSchema.parse(raw);
 }
+
+export async function generateQuestions(
+  applicationId: string,
+): Promise<Array<{ question: string; answer: string }>> {
+  const raw = await apiFetch<unknown>("/workflows/questions", {
+    method: "POST",
+    body: JSON.stringify({ application_id: applicationId }),
+  });
+  const parsed = (raw as { questions: Array<{ question: string; answer: string }> }).questions;
+  return parsed;
+}
+
+export async function markSubmitted(appId: string): Promise<void> {
+  await apiFetch<unknown>(`/applications/${appId}/mark_submitted`, { method: "POST" });
+}
+
+export async function submitApply(
+  runId: string,
+  submitActionLabel: string,
+): Promise<ApplyStepResponse> {
+  const raw = await apiFetch<unknown>(`/workflows/apply/${runId}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ approved_values: {}, action_label: submitActionLabel, action: "continue" }),
+  });
+  return applyStepResponseSchema.parse(raw);
+}

@@ -62,9 +62,11 @@ class PrepareResponse(BaseModel):
 
     application_id: str
     cover_letter: str
+    job_description: str = ""
     questions: list[dict[str, str]] = Field(default_factory=list)
     is_suitable: bool = True
     gaps: list[str] = Field(default_factory=list)
+    match_evidence: str = ""  # [STRONG/MODERATE/WEAK] requirement → evidence lines
 
 
 class PrepareState(BaseModel):
@@ -78,6 +80,7 @@ class PrepareState(BaseModel):
 
     # Generated
     cover_letter: str = ""
+    match_evidence: str = ""  # [STRONG/MODERATE/WEAK] req → evidence lines
     questions: list[dict[str, str]] = Field(default_factory=list)
     is_suitable: bool = True
     gaps: list[str] = Field(default_factory=list)
