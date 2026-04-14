@@ -1,17 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchJobs, ignoreJob, queueJob, runSearch } from "@/api/jobs";
+import { fetchJobs, fetchSearchTags, ignoreJob, queueJob, runSearch } from "@/api/jobs";
 import { useState } from "react";
 import type { Job } from "@/api/schemas";
 
-function JobCard({ job, onReview, onIgnore, isPending }: {
+function JobCard({ job, onReview, onIgnore, isPending, onTagClick }: {
   job: Job;
   onReview: () => void;
   onIgnore: () => void;
   isPending: boolean;
+  onTagClick: (tag: string) => void;
 }) {
   const meta = job.payload;
-  const tags = meta.tags ?? [];
+  const providerTags = meta.tags ?? [];
   const bullets = meta.bullet_points ?? [];
+  const searchTags = job.search_tags ?? [];
 
   // Build the subtitle chips: work_type · location · work_arrangement · salary
   const chips: string[] = [];
@@ -40,7 +42,7 @@ function JobCard({ job, onReview, onIgnore, isPending }: {
 
       {/* Main content */}
       <div className="flex-1 min-w-0">
-        {/* Title + badges row */}
+        {/* Title + provider tags row */}
         <div className="flex items-start gap-2 flex-wrap mb-0.5">
           <a
             href={job.source_url}
@@ -50,7 +52,7 @@ function JobCard({ job, onReview, onIgnore, isPending }: {
           >
             {job.title}
           </a>
-          {tags.map((tag) => (
+          {providerTags.map((tag) => (
             <span
               key={tag}
               className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium flex-shrink-0"
@@ -63,7 +65,7 @@ function JobCard({ job, onReview, onIgnore, isPending }: {
         {/* Company */}
         <div className="text-slate-600 text-sm mb-1">{job.company}</div>
 
-        {/* Metadata chips: work_type · location · work_arrangement · salary */}
+        {/* Metadata chips */}
         {chips.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-slate-500 text-xs mb-2">
             {chips.map((chip, i) => (
@@ -83,6 +85,21 @@ function JobCard({ job, onReview, onIgnore, isPending }: {
         ) : job.summary ? (
           <p className="text-slate-600 text-xs line-clamp-2 mb-2">{job.summary}</p>
         ) : null}
+
+        {/* Search tags — clickable, filter the list when clicked */}
+        {searchTags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {searchTags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => onTagClick(tag)}
+                className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Footer: posted date + actions */}
         <div className="flex items-center justify-between gap-2 mt-1">
@@ -114,28 +131,37 @@ export default function JobsPage() {
   const [keywords, setKeywords] = useState("python");
   const [location, setLocation] = useState("");
   const [maxPages, setMaxPages] = useState(3);
+  const [activeTag, setActiveTag] = useState<string | undefined>(undefined);
+
+  const tagsQuery = useQuery({
+    queryKey: ["search-tags"],
+    queryFn: fetchSearchTags,
+  });
 
   const jobsQuery = useQuery({
-    queryKey: ["jobs", "discovered"],
-    queryFn: () => fetchJobs({ state: "discovered" }),
+    queryKey: ["jobs", "discovered", activeTag],
+    queryFn: () => fetchJobs({ state: "discovered", keyword: activeTag }),
   });
 
   const searchMutation = useMutation({
     mutationFn: runSearch,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["search-tags"] });
+    },
   });
 
   const queueMutation = useMutation({
     mutationFn: queueJob,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
   });
 
   const ignoreMutation = useMutation({
     mutationFn: ignoreJob,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
   });
+
+  const availableTags = tagsQuery.data ?? [];
 
   return (
     <section className="space-y-6">
@@ -194,12 +220,46 @@ export default function JobsPage() {
         )}
       </form>
 
+      {/* Search tag filter pills */}
+      {availableTags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500 font-medium">Filter by search:</span>
+          <button
+            onClick={() => setActiveTag(undefined)}
+            className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+              activeTag === undefined
+                ? "bg-slate-800 text-white border-slate-800"
+                : "bg-white text-slate-600 border-slate-300 hover:border-slate-500"
+            }`}
+          >
+            All
+          </button>
+          {availableTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => setActiveTag(activeTag === tag ? undefined : tag)}
+              className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                activeTag === tag
+                  ? "bg-emerald-600 text-white border-emerald-600"
+                  : "bg-white text-emerald-700 border-emerald-300 hover:border-emerald-500"
+              }`}
+            >
+              #{tag}
+            </button>
+          ))}
+        </div>
+      )}
+
       {jobsQuery.isLoading && <p className="text-slate-500">Loading…</p>}
       {jobsQuery.isError && (
         <p className="text-red-600">Failed to load jobs: {(jobsQuery.error as Error).message}</p>
       )}
       {jobsQuery.isSuccess && jobsQuery.data.length === 0 && (
-        <p className="text-slate-500">No new jobs. Run a search to discover some.</p>
+        <p className="text-slate-500">
+          {activeTag
+            ? `No jobs found for search "${activeTag}".`
+            : "No new jobs. Run a search to discover some."}
+        </p>
       )}
 
       {jobsQuery.isSuccess && jobsQuery.data.length > 0 && (
@@ -211,6 +271,7 @@ export default function JobsPage() {
               onReview={() => queueMutation.mutate(job.id)}
               onIgnore={() => ignoreMutation.mutate(job.id)}
               isPending={queueMutation.isPending || ignoreMutation.isPending}
+              onTagClick={(tag) => setActiveTag(tag)}
             />
           ))}
         </div>

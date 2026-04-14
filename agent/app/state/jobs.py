@@ -64,6 +64,7 @@ class Job(BaseModel):
     state: str = "discovered"  # discovered | in_review | ignored
     discovered_at: datetime
     last_seen_at: datetime
+    search_tags: list[str] = Field(default_factory=list)  # keywords that surfaced this job
 
 
 class SearchResponse(BaseModel):

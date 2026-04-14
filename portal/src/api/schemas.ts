@@ -32,6 +32,7 @@ export const jobSchema = z.object({
   state: z.string().default("discovered"),
   discovered_at: z.string(),
   last_seen_at: z.string(),
+  search_tags: z.array(z.string()).optional().default([]),
 });
 export type Job = z.infer<typeof jobSchema>;
 

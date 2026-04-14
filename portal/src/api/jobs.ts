@@ -8,13 +8,19 @@ import {
   type QueueJobResponse,
 } from "./schemas";
 
-export async function fetchJobs(opts?: { provider?: string; state?: string }): Promise<Job[]> {
+export async function fetchJobs(opts?: { provider?: string; state?: string; keyword?: string }): Promise<Job[]> {
   const params = new URLSearchParams();
   if (opts?.provider) params.set("provider", opts.provider);
   if (opts?.state) params.set("state", opts.state);
+  if (opts?.keyword) params.set("keyword", opts.keyword);
   const query = params.toString() ? `?${params.toString()}` : "";
   const raw = await apiFetch<unknown>(`/jobs${query}`);
   return jobListSchema.parse(raw).jobs;
+}
+
+export async function fetchSearchTags(): Promise<string[]> {
+  const raw = await apiFetch<unknown>("/jobs/search-tags");
+  return (raw as { tags: string[] }).tags ?? [];
 }
 
 export async function queueJob(jobId: string): Promise<QueueJobResponse> {

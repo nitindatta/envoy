@@ -56,6 +56,7 @@ def build_search_graph(
                 summary=job.snippet,
                 payload=job.model_dump(),
             )
+            await repository.tag_job(job_id, state.keywords)
             ids.append(job_id)
         return {"persisted_job_ids": ids}
 

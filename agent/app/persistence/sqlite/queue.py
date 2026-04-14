@@ -105,6 +105,25 @@ class SqliteQueueRepository:
             created_at=row[5],
         )
 
+    async def reset_stale(self, older_than_seconds: int = 600) -> int:
+        """Reset items stuck in 'processing' back to 'pending'.
+
+        Called on startup so items orphaned by a previous crash or restart
+        are automatically re-queued rather than stuck forever.
+        Returns the number of items reset.
+        """
+        cutoff = (datetime.now(UTC) - __import__("datetime").timedelta(seconds=older_than_seconds)).isoformat()
+        cursor = await self._conn.execute(
+            "UPDATE work_queue SET status='pending', started_at=NULL "
+            "WHERE status='processing' AND started_at <= ?",
+            (cutoff,),
+        )
+        await self._conn.commit()
+        count = cursor.rowcount
+        if count:
+            log.warning("[queue] reset %d stale processing item(s) older than %ds", count, older_than_seconds)
+        return count
+
     async def mark_done(self, item_id: str) -> None:
         now = datetime.now(UTC).isoformat()
         await self._conn.execute(

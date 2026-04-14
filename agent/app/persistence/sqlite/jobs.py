@@ -18,6 +18,9 @@ from app.state.jobs import Job
 
 
 def _row_to_job(row: aiosqlite.Row) -> Job:
+    keys = row.keys()
+    raw_tags = row["search_tags"] if "search_tags" in keys else None
+    search_tags = [t for t in raw_tags.split(",") if t] if raw_tags else []
     return Job(
         id=row["id"],
         provider=row["provider"],
@@ -28,10 +31,21 @@ def _row_to_job(row: aiosqlite.Row) -> Job:
         location=row["location"],
         summary=row["summary"],
         payload=json.loads(row["payload_json"]),
-        state=row["state"] if "state" in row.keys() else "discovered",
+        state=row["state"] if "state" in keys else "discovered",
         discovered_at=datetime.fromisoformat(row["discovered_at"]),
         last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
+        search_tags=search_tags,
     )
+
+
+# Base SELECT that includes search_tags via subquery — used in all list queries.
+_SELECT_JOBS = """
+    SELECT j.*,
+           (SELECT GROUP_CONCAT(jst.keyword, ',')
+              FROM job_search_tags jst
+             WHERE jst.job_id = j.id) AS search_tags
+      FROM jobs j
+"""
 
 
 class SqliteJobRepository:
@@ -121,6 +135,26 @@ class SqliteJobRepository:
         await cursor.close()
         return _row_to_job(row) if row else None
 
+    async def tag_job(self, job_id: str, keyword: str) -> None:
+        """Associate a search keyword with a job. Idempotent (INSERT OR IGNORE)."""
+        normalized = keyword.strip().lower()
+        if not normalized:
+            return
+        await self._db.execute(
+            "INSERT OR IGNORE INTO job_search_tags (job_id, keyword) VALUES (?, ?)",
+            (job_id, normalized),
+        )
+        await self._db.commit()
+
+    async def list_search_tags(self) -> list[str]:
+        """Return all distinct search keywords, alphabetically sorted."""
+        cursor = await self._db.execute(
+            "SELECT DISTINCT keyword FROM job_search_tags ORDER BY keyword ASC"
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [row[0] for row in rows]
+
     async def update_state(self, job_id: str, state: str) -> None:
         await self._db.execute(
             "UPDATE jobs SET state = ? WHERE id = ?",
@@ -128,32 +162,55 @@ class SqliteJobRepository:
         )
         await self._db.commit()
 
-    async def list_by_provider(self, provider: str, limit: int = 50, state: str | None = None) -> list[Job]:
+    async def list_by_provider(
+        self,
+        provider: str,
+        limit: int = 50,
+        state: str | None = None,
+        keyword: str | None = None,
+    ) -> list[Job]:
+        conditions = ["j.provider = ?"]
+        params: list[Any] = [provider]
         if state:
-            cursor = await self._db.execute(
-                "SELECT * FROM jobs WHERE provider = ? AND state = ? ORDER BY discovered_at DESC LIMIT ?",
-                (provider, state, limit),
+            conditions.append("j.state = ?")
+            params.append(state)
+        if keyword:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM job_search_tags jst2 WHERE jst2.job_id = j.id AND jst2.keyword = ?)"
             )
-        else:
-            cursor = await self._db.execute(
-                "SELECT * FROM jobs WHERE provider = ? ORDER BY discovered_at DESC LIMIT ?",
-                (provider, limit),
-            )
+            params.append(keyword.strip().lower())
+        where = " AND ".join(conditions)
+        params.append(limit)
+        cursor = await self._db.execute(
+            f"{_SELECT_JOBS} WHERE {where} ORDER BY j.discovered_at DESC LIMIT ?",
+            params,
+        )
         rows = await cursor.fetchall()
         await cursor.close()
         return [_row_to_job(row) for row in rows]
 
-    async def list_all(self, limit: int = 50, state: str | None = None) -> list[Job]:
+    async def list_all(
+        self,
+        limit: int = 50,
+        state: str | None = None,
+        keyword: str | None = None,
+    ) -> list[Job]:
+        conditions: list[str] = []
+        params: list[Any] = []
         if state:
-            cursor = await self._db.execute(
-                "SELECT * FROM jobs WHERE state = ? ORDER BY discovered_at DESC LIMIT ?",
-                (state, limit),
+            conditions.append("j.state = ?")
+            params.append(state)
+        if keyword:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM job_search_tags jst2 WHERE jst2.job_id = j.id AND jst2.keyword = ?)"
             )
-        else:
-            cursor = await self._db.execute(
-                "SELECT * FROM jobs ORDER BY discovered_at DESC LIMIT ?",
-                (limit,),
-            )
+            params.append(keyword.strip().lower())
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        cursor = await self._db.execute(
+            f"{_SELECT_JOBS} {where} ORDER BY j.discovered_at DESC LIMIT ?",
+            params,
+        )
         rows = await cursor.fetchall()
         await cursor.close()
         return [_row_to_job(row) for row in rows]

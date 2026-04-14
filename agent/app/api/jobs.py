@@ -15,18 +15,27 @@ log = logging.getLogger("jobs")
 _VALID_STATES = {"discovered", "in_review", "ignored"}
 
 
+@router.get("/jobs/search-tags")
+async def list_search_tags(request: Request) -> dict[str, list[str]]:
+    """Return all distinct search keywords that have been used to find jobs."""
+    repo: SqliteJobRepository = request.app.state.job_repository
+    tags = await repo.list_search_tags()
+    return {"tags": tags}
+
+
 @router.get("/jobs")
 async def list_jobs(
     request: Request,
     provider: str | None = None,
     state: str | None = None,
+    keyword: str | None = None,
     limit: int = 50,
 ) -> dict[str, list[Job]]:
     repo: SqliteJobRepository = request.app.state.job_repository
     jobs = (
-        await repo.list_by_provider(provider, limit=limit, state=state)
+        await repo.list_by_provider(provider, limit=limit, state=state, keyword=keyword)
         if provider
-        else await repo.list_all(limit=limit, state=state)
+        else await repo.list_all(limit=limit, state=state, keyword=keyword)
     )
     return {"jobs": jobs}
 

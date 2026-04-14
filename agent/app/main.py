@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.question_cache_repository = SqliteQuestionCacheRepository(database.connection)
     app.state.tool_client = ToolClient(settings)
 
+    await app.state.queue_repository.reset_stale()
     prepare_task = asyncio.create_task(run_prepare_worker(app.state))
     apply_task = asyncio.create_task(run_apply_worker(app.state))
     try:
