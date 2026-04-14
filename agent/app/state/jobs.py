@@ -27,6 +27,13 @@ class SeekJob(BaseModel):
     url: str
     posted_at: str | None = None
     snippet: str | None = None
+    # Rich listing metadata — null/empty when not present on the listing
+    salary: str | None = None
+    work_type: str | None = None
+    work_arrangement: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    logo_url: str | None = None
+    bullet_points: list[str] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):

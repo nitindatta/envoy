@@ -5,21 +5,51 @@ import {
   applyStepResponseSchema,
   prepareResponseSchema,
   type Application,
+  type ApplicationDetail,
   type ApplyStepResponse,
   type PrepareResponse,
 } from "./schemas";
 import { z } from "zod";
 
-export async function fetchApplications(state?: string): Promise<Application[]> {
-  const url = state ? `/applications?state=${state}` : "/applications";
+export async function fetchApplications(params?: { state?: string }): Promise<Application[]> {
+  const url = params?.state ? `/applications?state=${params.state}` : "/applications";
   const raw = await apiFetch<unknown>(url);
   const parsed = z.object({ applications: z.array(applicationSchema) }).parse(raw);
   return parsed.applications;
 }
 
-export async function fetchApplicationDetail(appId: string) {
+export async function fetchApplicationDetail(appId: string): Promise<ApplicationDetail> {
   const raw = await apiFetch<unknown>(`/applications/${appId}`);
   return applicationDetailSchema.parse(raw);
+}
+
+export async function enqueueApply(appId: string): Promise<void> {
+  await apiFetch<unknown>(`/applications/${appId}/apply`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function enqueueGate(
+  appId: string,
+  runId: string,
+  approvedValues: Record<string, string>,
+): Promise<void> {
+  await apiFetch<unknown>(`/applications/${appId}/gate`, {
+    method: "POST",
+    body: JSON.stringify({ run_id: runId, approved_values: approvedValues }),
+  });
+}
+
+export async function enqueueSubmit(
+  appId: string,
+  runId: string,
+  label: string,
+): Promise<void> {
+  await apiFetch<unknown>(`/applications/${appId}/submit`, {
+    method: "POST",
+    body: JSON.stringify({ run_id: runId, label }),
+  });
 }
 
 export async function triggerPrepare(jobId: string): Promise<PrepareResponse> {

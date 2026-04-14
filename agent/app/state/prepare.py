@@ -33,9 +33,10 @@ class Application(BaseModel):
     job_id: str
     source_provider: str
     source_url: str
-    state: str  # prepared | approved | discarded | submitted
+    state: str  # preparing | prepared | approved | discarded | submitted
     created_at: datetime
     updated_at: datetime
+    last_apply_step_json: str | None = None
 
 
 class Draft(BaseModel):

@@ -18,7 +18,7 @@ export default function QueuePage() {
 
   const appsQuery = useQuery({
     queryKey: ["applications", "approved"],
-    queryFn: () => fetchApplications("approved"),
+    queryFn: () => fetchApplications({ state: "approved" }),
   });
 
   const detailQuery = useQuery({
@@ -35,8 +35,8 @@ export default function QueuePage() {
     },
   });
 
-  const coverLetter = detailQuery.data?.drafts.find((d) => d.draft_type === "cover_letter");
-  const qaDrafts = detailQuery.data?.drafts.filter((d) => d.draft_type === "question_answer") ?? [];
+  const coverLetterContent = detailQuery.data?.cover_letter ?? "";
+  // QueuePage is legacy — Q&A drafts not exposed by the detail schema anymore
 
   return (
     <div style={{ display: "flex", gap: "1.5rem" }}>
@@ -158,11 +158,11 @@ export default function QueuePage() {
 
             {detailQuery.isLoading && <p>Loading drafts…</p>}
 
-            {coverLetter && (
+            {coverLetterContent && (
               <section style={{ marginBottom: "1.5rem" }}>
                 <h3>Cover Letter</h3>
                 <textarea
-                  defaultValue={coverLetter.content}
+                  defaultValue={coverLetterContent}
                   rows={12}
                   style={{
                     width: "100%",
@@ -175,33 +175,6 @@ export default function QueuePage() {
                     boxSizing: "border-box",
                   }}
                 />
-              </section>
-            )}
-
-            {qaDrafts.length > 0 && (
-              <section>
-                <h3>Predicted Interview Questions</h3>
-                {qaDrafts.map((draft, i) => {
-                  let qa: { question: string; answer: string } = { question: "", answer: "" };
-                  try { qa = JSON.parse(draft.content); } catch { /* ignore */ }
-                  return (
-                    <div
-                      key={draft.id}
-                      style={{
-                        marginBottom: "1rem",
-                        padding: "0.75rem",
-                        background: "#f9fafb",
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 6,
-                      }}
-                    >
-                      <p style={{ fontWeight: 600, margin: "0 0 0.5rem" }}>
-                        Q{i + 1}: {qa.question}
-                      </p>
-                      <p style={{ margin: 0, color: "#374151" }}>{qa.answer}</p>
-                    </div>
-                  );
-                })}
               </section>
             )}
           </div>

@@ -1,5 +1,5 @@
-import logging
 import json as _json
+import logging
 import re
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -33,19 +33,39 @@ async def list_jobs(
 
 @router.post("/jobs/{job_id}/queue")
 async def queue_job(job_id: str, request: Request, background_tasks: BackgroundTasks) -> dict:
-    repo: SqliteJobRepository = request.app.state.job_repository
-    job = await repo.get(job_id)
+    job_repo: SqliteJobRepository = request.app.state.job_repository
+    app_repo = request.app.state.application_repository
+    queue_repo = request.app.state.queue_repository
+
+    job = await job_repo.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    await repo.update_state(job_id, "in_review")
-    background_tasks.add_task(
-        _analyse_job,
-        settings=request.app.state.settings,
-        tool_client=request.app.state.tool_client,
-        analysis_repo=request.app.state.job_analysis_repository,
-        job=job,
-    )
-    return {"job_id": job_id, "state": "in_review"}
+
+    # Check if already in review (idempotent)
+    existing = await app_repo.get_active_by_job_id(job_id)
+    if existing:
+        app_id = existing[0]
+    else:
+        # Move job to in_review
+        await job_repo.update_state(job_id, "in_review")
+        # Create application placeholder immediately so portal can show it
+        app_id = await app_repo.create_preparing(
+            job_id=job_id,
+            source_provider=job.provider,
+            source_url=job.source_url,
+        )
+        # Enqueue prepare
+        await queue_repo.enqueue("prepare", app_id)
+        # Also kick off JD analysis immediately (pre-warms the cache for prepare)
+        background_tasks.add_task(
+            _analyse_job,
+            settings=request.app.state.settings,
+            tool_client=request.app.state.tool_client,
+            analysis_repo=request.app.state.job_analysis_repository,
+            job=job,
+        )
+
+    return {"job_id": job_id, "application_id": app_id, "state": "preparing"}
 
 
 @router.post("/jobs/{job_id}/ignore")

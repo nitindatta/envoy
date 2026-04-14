@@ -66,6 +66,7 @@ class ApplyStepResponse(BaseModel):
     low_confidence_ids: list[str] = Field(default_factory=list)
     submit_action_label: str = "Continue"
     step_history: list[dict] = Field(default_factory=list)
+    error: str | None = None
 
 
 class ApplyResumeRequest(BaseModel):

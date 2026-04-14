@@ -18,6 +18,13 @@ export type SeekJob = {
   url: string;
   posted_at: string | null;
   snippet: string | null;
+  // Rich listing metadata — null/empty when not present on the listing
+  salary: string | null;
+  work_type: string | null;
+  work_arrangement: string | null;
+  tags: string[];
+  logo_url: string | null;
+  bullet_points: string[];
 };
 
 function buildSeekUrl(keywords: string, location?: string): string {

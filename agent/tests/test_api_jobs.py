@@ -4,8 +4,6 @@ import respx
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.persistence.sqlite.connection import Database
-from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.settings import Settings
 from app.tools.client import ToolClient
 
@@ -13,30 +11,31 @@ from app.tools.client import ToolClient
 @pytest.fixture()
 async def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("INTERNAL_AUTH_SECRET", "test-secret")
-    # Reset cached settings so the env var is picked up.
+    monkeypatch.setenv("SQLITE_PATH", ":memory:")
+    # Reset cached settings so the env vars are picked up.
     import app.settings as settings_module
 
     settings_module._settings = None
 
-    app = create_app()
-    settings: Settings = app.state.settings
-    db = await Database.in_memory()
-    app.state.database = db
-    app.state.job_repository = SqliteJobRepository(db.connection)
-    app.state.tool_client = ToolClient(
+    app_instance = create_app()
+    settings: Settings = app_instance.state.settings
+    tool_client = ToolClient(
         settings,
         client=httpx.AsyncClient(
             base_url=settings.tools_base_url,
             headers={"X-Internal-Auth": settings.internal_auth_secret},
         ),
     )
+    # Stash so lifespan (which creates its own ToolClient) is replaced after startup.
+    app_instance.state._test_tool_client = tool_client
 
-    # Bypass lifespan (we wired state manually).
-    with TestClient(app) as tc:
+    with TestClient(app_instance) as tc:
+        # Replace the tool client with our mocked one after lifespan wired the real one.
+        app_instance.state.tool_client = tool_client
         yield tc
 
-    await app.state.tool_client.aclose()
-    await db.close()
+    await tool_client.aclose()
+    settings_module._settings = None
 
 
 async def test_list_jobs_empty(client: TestClient) -> None:

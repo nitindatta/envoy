@@ -2,8 +2,10 @@ import { apiFetch } from "./client";
 import {
   jobListSchema,
   searchResponseSchema,
+  queueJobResponseSchema,
   type Job,
   type SearchResponse,
+  type QueueJobResponse,
 } from "./schemas";
 
 export async function fetchJobs(opts?: { provider?: string; state?: string }): Promise<Job[]> {
@@ -15,8 +17,9 @@ export async function fetchJobs(opts?: { provider?: string; state?: string }): P
   return jobListSchema.parse(raw).jobs;
 }
 
-export async function queueJob(jobId: string): Promise<void> {
-  await apiFetch<unknown>(`/jobs/${jobId}/queue`, { method: "POST" });
+export async function queueJob(jobId: string): Promise<QueueJobResponse> {
+  const raw = await apiFetch<unknown>(`/jobs/${jobId}/queue`, { method: "POST" });
+  return queueJobResponseSchema.parse(raw);
 }
 
 export async function ignoreJob(jobId: string): Promise<void> {

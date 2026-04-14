@@ -47,6 +47,8 @@ class Settings(BaseSettings):
 
     @property
     def resolved_sqlite_path(self) -> Path:
+        if str(self.sqlite_path) == ":memory:":
+            return Path(":memory:")
         if self.sqlite_path.is_absolute():
             return self.sqlite_path
         return (self.repo_root / self.sqlite_path).resolve()

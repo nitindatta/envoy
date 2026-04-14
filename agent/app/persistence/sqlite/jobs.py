@@ -65,6 +65,8 @@ class SqliteJobRepository:
 
         if existing_row is not None:
             job_id = existing_row["id"]
+            # Reset ignored jobs back to discovered when seen again in search results.
+            # in_review/applied/discarded jobs are left untouched.
             await self._db.execute(
                 """
                 UPDATE jobs
@@ -74,7 +76,8 @@ class SqliteJobRepository:
                        location = ?,
                        summary = ?,
                        payload_json = ?,
-                       last_seen_at = ?
+                       last_seen_at = ?,
+                       state = CASE WHEN state = 'ignored' THEN 'discovered' ELSE state END
                  WHERE id = ?
                 """,
                 (

@@ -63,4 +63,45 @@ describe('parseListing (SEEK fixture)', () => {
       expect(result.reason).toContain('no job cards found');
     }
   });
+
+  it('extracts salary when present', () => {
+    const jobs = parseListing(fixtureHtml);
+    const withSalary = jobs.filter((j) => j.salary !== null);
+    expect(withSalary.length).toBeGreaterThan(0);
+    // Salary text should be non-empty
+    for (const j of withSalary) {
+      expect(j.salary!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('extracts work_type when present', () => {
+    const jobs = parseListing(fixtureHtml);
+    const withType = jobs.filter((j) => j.work_type !== null);
+    expect(withType.length).toBeGreaterThan(0);
+    // Known work types in fixture
+    const types = withType.map((j) => j.work_type);
+    expect(types.some((t) => ['Full time', 'Part time', 'Contract/Temp'].includes(t!))).toBe(true);
+  });
+
+  it('extracts logo_url when present', () => {
+    const jobs = parseListing(fixtureHtml);
+    const withLogo = jobs.filter((j) => j.logo_url !== null);
+    expect(withLogo.length).toBeGreaterThan(0);
+    expect(withLogo[0].logo_url).toMatch(/^https:\/\//);
+  });
+
+  it('extracts tags for badge cards', () => {
+    const jobs = parseListing(fixtureHtml);
+    const withTags = jobs.filter((j) => j.tags.length > 0);
+    // Fixture has at least one earlyApplicantAdBadge card
+    expect(withTags.length).toBeGreaterThan(0);
+  });
+
+  it('all jobs have tags and bullet_points as arrays', () => {
+    const jobs = parseListing(fixtureHtml);
+    for (const job of jobs) {
+      expect(Array.isArray(job.tags)).toBe(true);
+      expect(Array.isArray(job.bullet_points)).toBe(true);
+    }
+  });
 });

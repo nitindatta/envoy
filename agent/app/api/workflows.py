@@ -108,15 +108,7 @@ async def start_apply(request: Request, body: ApplyRequest) -> ApplyStepResponse
         workflow_run_id=run_id,
     )
 
-    return ApplyStepResponse(
-        workflow_run_id=state.workflow_run_id,
-        status=state.status,
-        step=state.current_step,
-        proposed_values=state.proposed_values,
-        low_confidence_ids=state.low_confidence_ids,
-        submit_action_label=state.submit_action_label,
-        step_history=state.step_history,
-    )
+    return _apply_response(state)
 
 
 @router.post("/workflows/apply/{run_id}/resume", response_model=ApplyStepResponse)
@@ -135,14 +127,27 @@ async def resume_apply_run(run_id: str, request: Request, body: ApplyResumeReque
         action=body.action,
     )
 
+    return _apply_response(state)
+
+
+def _apply_response(state) -> ApplyStepResponse:
+    # Translate LangGraph's "running" status to a meaningful portal status.
+    # When the graph pauses at the gate interrupt, status stays "running" but
+    # low_confidence_ids is populated — surface this as "needs_review" so the
+    # portal knows to show only the uncertain fields for human input.
+    status = state.status
+    if status == "running" and state.low_confidence_ids:
+        status = "needs_review"
+
     return ApplyStepResponse(
         workflow_run_id=state.workflow_run_id,
-        status=state.status,
+        status=status,
         step=state.current_step,
         proposed_values=state.proposed_values,
         low_confidence_ids=state.low_confidence_ids,
         submit_action_label=state.submit_action_label,
         step_history=state.step_history,
+        error=state.error,
     )
 
 

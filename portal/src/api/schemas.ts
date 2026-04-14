@@ -6,6 +6,19 @@ export const healthSchema = z.object({
 });
 export type Health = z.infer<typeof healthSchema>;
 
+// Generic listing metadata carried in payload — any provider can populate these fields.
+// Fields are optional: render whatever is available, skip what isn't.
+export const listingMetaSchema = z.object({
+  provider_job_id: z.string().optional(),
+  posted_at: z.string().nullable().optional(),
+  salary: z.string().nullable().optional(),
+  work_type: z.string().nullable().optional(),
+  work_arrangement: z.string().nullable().optional(),
+  tags: z.array(z.string()).optional().default([]),
+  logo_url: z.string().nullable().optional(),
+  bullet_points: z.array(z.string()).optional().default([]),
+}).passthrough();
+
 export const jobSchema = z.object({
   id: z.string(),
   provider: z.string(),
@@ -15,7 +28,7 @@ export const jobSchema = z.object({
   company: z.string(),
   location: z.string().nullable(),
   summary: z.string().nullable(),
-  payload: z.record(z.unknown()),
+  payload: listingMetaSchema,
   state: z.string().default("discovered"),
   discovered_at: z.string(),
   last_seen_at: z.string(),
@@ -49,24 +62,37 @@ export type Draft = z.infer<typeof draftSchema>;
 export const applicationSchema = z.object({
   id: z.string(),
   job_id: z.string(),
-  source_provider: z.string(),
+  source_provider: z.string().optional(),
   source_url: z.string(),
   state: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
-  // joined job fields
+  last_apply_step_json: z.string().nullable().optional(),
+  // joined job fields (from list endpoint)
   job_title: z.string().nullable().optional(),
   job_company: z.string().nullable().optional(),
   job_location: z.string().nullable().optional(),
   job_source_url: z.string().nullable().optional(),
   job_summary: z.string().nullable().optional(),
+  job_payload: listingMetaSchema.optional(),
 });
 export type Application = z.infer<typeof applicationSchema>;
 
 export const applicationDetailSchema = z.object({
   application: applicationSchema,
-  drafts: z.array(draftSchema),
+  cover_letter: z.string().default(""),
+  match_evidence: z.string().default(""),
+  last_apply_step: z.string().nullable().optional(),
+  job: z.object({
+    title: z.string().nullable(),
+    company: z.string().nullable(),
+    location: z.string().nullable(),
+    source_url: z.string().nullable(),
+    summary: z.string().nullable(),
+    payload: listingMetaSchema.optional(),
+  }).nullable().optional(),
 });
+export type ApplicationDetail = z.infer<typeof applicationDetailSchema>;
 
 export const prepareResponseSchema = z.object({
   application_id: z.string(),
@@ -121,5 +147,13 @@ export const applyStepResponseSchema = z.object({
   low_confidence_ids: z.array(z.string()).optional(),
   submit_action_label: z.string().optional().default("Continue"),
   step_history: z.array(stepHistoryEntrySchema).optional().default([]),
+  error: z.string().nullable().optional(),
 });
 export type ApplyStepResponse = z.infer<typeof applyStepResponseSchema>;
+
+export const queueJobResponseSchema = z.object({
+  job_id: z.string(),
+  application_id: z.string(),
+  state: z.string(),
+});
+export type QueueJobResponse = z.infer<typeof queueJobResponseSchema>;

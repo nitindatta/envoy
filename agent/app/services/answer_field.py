@@ -218,6 +218,19 @@ async def propose_field_values(
             log.debug("[field:%s] label=%r → cover_letter (%d words)", field.id, field.label, len(cover_letter.split()))
             continue
 
+        # Resume / CV selector — always pick current value or first option; never send to LLM
+        _resume_labels = ("resum", "resumé", "cv", "curriculum vitae", "upload resume", "select resume")
+        if any(kw in label_lower for kw in _resume_labels):
+            if field.current_value:
+                proposed[field.id] = field.current_value
+                log.debug("[field:%s] label=%r → resume keep current=%r", field.id, field.label, field.current_value)
+            elif field.options:
+                proposed[field.id] = field.options[0]
+                log.debug("[field:%s] label=%r → resume pick first option=%r", field.id, field.label, field.options[0])
+            else:
+                log.debug("[field:%s] label=%r → resume no value/options, skipping", field.id, field.label)
+            continue
+
         # Radio groups: cover letter → force "Write a cover letter"
         if field.field_type == "radio":
             if "cover letter" in label_lower and field.options:

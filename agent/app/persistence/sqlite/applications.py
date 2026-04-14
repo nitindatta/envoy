@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -12,7 +12,7 @@ from app.state.prepare import Application, Draft
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class SqliteApplicationRepository:
@@ -43,6 +43,46 @@ class SqliteApplicationRepository:
         await self._conn.commit()
         return app_id
 
+    async def create_preparing(
+        self,
+        *,
+        job_id: str,
+        source_provider: str,
+        source_url: str,
+    ) -> str:
+        """Create a placeholder application in 'preparing' state for async queue."""
+        app_id = str(uuid.uuid4())
+        now = _now()
+        await self._conn.execute(
+            "INSERT INTO applications "
+            "(id, job_id, source_provider, source_url, state, approval_required, is_suitable, gaps_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'preparing', 1, 1, '[]', ?, ?)",
+            (app_id, job_id, source_provider, source_url, now, now),
+        )
+        await self._conn.commit()
+        return app_id
+
+    async def update_after_prepare(
+        self,
+        app_id: str,
+        *,
+        is_suitable: bool,
+        gaps: list[str],
+        new_state: str = "prepared",
+    ) -> None:
+        await self._conn.execute(
+            "UPDATE applications SET is_suitable=?, gaps_json=?, state=?, updated_at=? WHERE id=?",
+            (1 if is_suitable else 0, json.dumps(gaps), new_state, _now(), app_id),
+        )
+        await self._conn.commit()
+
+    async def update_apply_step(self, app_id: str, step_json: str) -> None:
+        await self._conn.execute(
+            "UPDATE applications SET last_apply_step_json=?, updated_at=? WHERE id=?",
+            (step_json, _now(), app_id),
+        )
+        await self._conn.commit()
+
     async def update_state(self, app_id: str, state: str) -> None:
         await self._conn.execute(
             "UPDATE applications SET state = ?, updated_at = ? WHERE id = ?",
@@ -52,7 +92,7 @@ class SqliteApplicationRepository:
 
     async def get(self, app_id: str) -> Application | None:
         async with self._conn.execute(
-            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at "
+            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json "
             "FROM applications WHERE id = ?",
             (app_id,),
         ) as cur:
@@ -60,17 +100,22 @@ class SqliteApplicationRepository:
         if row is None:
             return None
         return Application(
-            id=row[0], job_id=row[1], source_provider=row[2],
-            source_url=row[3], state=row[4],
+            id=row[0],
+            job_id=row[1],
+            source_provider=row[2],
+            source_url=row[3],
+            state=row[4],
             created_at=datetime.fromisoformat(row[5]),
             updated_at=datetime.fromisoformat(row[6]),
+            last_apply_step_json=row[7],
         )
 
     async def get_active_by_job_id(self, job_id: str) -> tuple[str, bool, list[str]] | None:
-        """Return (application_id, is_suitable, gaps) for the latest non-discarded application, or None."""
+        """Return (application_id, is_suitable, gaps) for the latest non-discarded,
+        non-preparing application, or None."""
         async with self._conn.execute(
             "SELECT id, is_suitable, gaps_json FROM applications "
-            "WHERE job_id = ? AND state NOT IN ('discarded') "
+            "WHERE job_id = ? AND state NOT IN ('discarded', 'preparing') "
             "ORDER BY created_at DESC LIMIT 1",
             (job_id,),
         ) as cur:
@@ -79,27 +124,39 @@ class SqliteApplicationRepository:
             return None
         return row[0], bool(row[1]), json.loads(row[2])
 
-    async def list_all(self, limit: int = 50, state: str | None = None) -> list[Application]:
+    async def list_all(
+        self,
+        limit: int = 50,
+        state: str | None = None,
+        exclude_discarded: bool = False,
+    ) -> list[Application]:
+        base_select = (
+            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json "
+            "FROM applications"
+        )
         if state:
-            sql = (
-                "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at "
-                "FROM applications WHERE state = ? ORDER BY created_at DESC LIMIT ?"
-            )
-            args = (state, limit)
-        else:
-            sql = (
-                "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at "
-                "FROM applications ORDER BY created_at DESC LIMIT ?"
-            )
+            sql = f"{base_select} WHERE state = ? ORDER BY created_at DESC LIMIT ?"
+            args: tuple = (state, limit)
+        elif exclude_discarded:
+            sql = f"{base_select} WHERE state != 'discarded' ORDER BY created_at DESC LIMIT ?"
             args = (limit,)
+        else:
+            sql = f"{base_select} ORDER BY created_at DESC LIMIT ?"
+            args = (limit,)
+
         async with self._conn.execute(sql, args) as cur:
             rows = await cur.fetchall()
+
         return [
             Application(
-                id=r[0], job_id=r[1], source_provider=r[2],
-                source_url=r[3], state=r[4],
+                id=r[0],
+                job_id=r[1],
+                source_provider=r[2],
+                source_url=r[3],
+                state=r[4],
                 created_at=datetime.fromisoformat(r[5]),
                 updated_at=datetime.fromisoformat(r[6]),
+                last_apply_step_json=r[7],
             )
             for r in rows
         ]
@@ -169,9 +226,13 @@ class SqliteDraftRepository:
             rows = await cur.fetchall()
         return [
             Draft(
-                id=r[0], application_id=r[1], draft_type=r[2],
-                question_fingerprint=r[3], generator=r[4],
-                content=r[5], version=r[6],
+                id=r[0],
+                application_id=r[1],
+                draft_type=r[2],
+                question_fingerprint=r[3],
+                generator=r[4],
+                content=r[5],
+                version=r[6],
                 created_at=datetime.fromisoformat(r[7]),
             )
             for r in rows

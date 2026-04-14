@@ -14,19 +14,17 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
 log = logging.getLogger("prepare")
 
 from app.persistence.sqlite.applications import SqliteApplicationRepository, SqliteDraftRepository
 from app.persistence.sqlite.job_analysis import SqliteJobAnalysisRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
-from app.services.ai import predict_questions
 from app.settings import Settings
-from app.state.prepare import PrepareState, SeekJobDetail
+from app.state.prepare import PrepareState
 from app.tools.client import ToolClient
 from app.tools.seek_detail import fetch_job_detail
 from app.workflows.cover_letter import run_cover_letter
@@ -39,6 +37,7 @@ def build_prepare_graph(
     app_repo: SqliteApplicationRepository,
     draft_repo: SqliteDraftRepository,
     analysis_repo: SqliteJobAnalysisRepository | None = None,
+    existing_app_id: str | None = None,
 ):
     profile = _load_profile(settings)
 
@@ -92,6 +91,8 @@ def build_prepare_graph(
     async def persist(state: PrepareState) -> dict[str, Any]:
         if state.error:
             log.warning("[persist] skipping — error=%s", state.error)
+            if existing_app_id:
+                await app_repo.update_state(existing_app_id, "failed")
             return {}
 
         job = await job_repo.get(state.job_id)
@@ -99,14 +100,28 @@ def build_prepare_graph(
             log.warning("[persist] job_id=%s not found", state.job_id)
             return {"error": f"job {state.job_id} not found"}
 
-        app_id = await app_repo.create(
-            job_id=state.job_id,
-            source_provider=job.provider,
-            source_url=job.source_url,
-            is_suitable=state.is_suitable,
-            gaps=state.gaps,
-        )
-        log.info("[persist] created application_id=%s for job=%s suitable=%s", app_id, state.job_id, state.is_suitable)
+        if existing_app_id:
+            # Update the pre-created "preparing" shell
+            new_state = "prepared" if state.is_suitable else "unsuitable"
+            await app_repo.update_after_prepare(
+                existing_app_id,
+                is_suitable=state.is_suitable,
+                gaps=state.gaps,
+                new_state=new_state,
+            )
+            app_id = existing_app_id
+            log.info("[persist] updated application_id=%s for job=%s suitable=%s state=%s",
+                     app_id, state.job_id, state.is_suitable, new_state)
+        else:
+            # Old path: create new application
+            app_id = await app_repo.create(
+                job_id=state.job_id,
+                source_provider=job.provider,
+                source_url=job.source_url,
+                is_suitable=state.is_suitable,
+                gaps=state.gaps,
+            )
+            log.info("[persist] created application_id=%s for job=%s suitable=%s", app_id, state.job_id, state.is_suitable)
 
         if not state.is_suitable:
             log.info("[persist] not suitable — skipping drafts (gaps=%s)", state.gaps)
@@ -172,25 +187,34 @@ async def run_prepare(
     analysis_repo: SqliteJobAnalysisRepository | None = None,
     *,
     job_id: str,
+    existing_app_id: str | None = None,
 ) -> PrepareState:
-    # Return cached result if an active (non-discarded) application already exists
-    cached = await app_repo.get_active_by_job_id(job_id)
-    if cached:
-        app_id, is_suitable, gaps = cached
-        cover_letter = await draft_repo.get_cover_letter(app_id)
-        match_evidence = await draft_repo.get_match_evidence(app_id)
-        log.info("[run_prepare] cache hit job_id=%s application_id=%s", job_id, app_id)
-        return PrepareState(
-            job_id=job_id,
-            application_id=app_id,
-            cover_letter=cover_letter,
-            match_evidence=match_evidence,
-            is_suitable=is_suitable,
-            gaps=gaps,
-            detail=None,  # not needed for response
-        )
+    if existing_app_id is None:
+        # Old cache-hit path (only used for sync /workflows/prepare endpoint)
+        cached = await app_repo.get_active_by_job_id(job_id)
+        if cached:
+            app_id, is_suitable, gaps = cached
+            match_evidence = await draft_repo.get_match_evidence(app_id)
+            if match_evidence:
+                cover_letter = await draft_repo.get_cover_letter(app_id)
+                log.info("[run_prepare] cache hit job_id=%s application_id=%s", job_id, app_id)
+                return PrepareState(
+                    job_id=job_id,
+                    application_id=app_id,
+                    cover_letter=cover_letter,
+                    match_evidence=match_evidence,
+                    is_suitable=is_suitable,
+                    gaps=gaps,
+                    detail=None,
+                )
+            # No match_evidence — old application record. Discard it and re-prepare.
+            log.info("[run_prepare] cache hit but no match_evidence — discarding old record and re-preparing job_id=%s app_id=%s", job_id, app_id)
+            await app_repo.update_state(app_id, "discarded")
 
-    graph = build_prepare_graph(settings, tool_client, job_repo, app_repo, draft_repo, analysis_repo)
+    graph = build_prepare_graph(
+        settings, tool_client, job_repo, app_repo, draft_repo, analysis_repo,
+        existing_app_id=existing_app_id,
+    )
     initial = PrepareState(job_id=job_id)
     result = await graph.ainvoke(initial)
     return PrepareState.model_validate(result)

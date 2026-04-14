@@ -20,7 +20,8 @@ class Database:
 
     @classmethod
     async def open(cls, sqlite_path: Path) -> Database:
-        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        if str(sqlite_path) != ":memory:":
+            sqlite_path.parent.mkdir(parents=True, exist_ok=True)
         connection = await aiosqlite.connect(str(sqlite_path))
         connection.row_factory = aiosqlite.Row
         await _apply_migrations(connection)

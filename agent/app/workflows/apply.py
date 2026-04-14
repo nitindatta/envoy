@@ -111,7 +111,8 @@ def build_apply_graph(
 
         if env.status == "error":
             log.error("[launch] start_apply returned error: %s", env.error)
-            return {"session_key": session_key, "status": "failed", "error": env.error}
+            err = env.error
+            return {"session_key": session_key, "status": "failed", "error": f"{err.type}: {err.message}" if err else "start_apply failed"}
 
         apply_result = env.data or {}
 
@@ -239,7 +240,8 @@ def build_apply_graph(
 
         if next_step is None:
             log.error("[submit] error or drift after submit: %s", env.status)
-            return {"status": "failed", "error": env.error or "drift after submit"}
+            err = env.error
+            return {"status": "failed", "error": f"{err.type}: {err.message}" if err else "drift after submit"}
 
         if next_step.page_type == "confirmation":
             log.info("[submit] confirmed — application submitted")
@@ -277,7 +279,8 @@ def build_apply_graph(
         if next_step is None:
             if env.status == "error":
                 log.error("[fill] error after fill: %s", env.error)
-                return {"status": "failed", "error": env.error, "step_history": new_history}
+                err = env.error
+                return {"status": "failed", "error": f"{err.type}: {err.message}" if err else "fill failed", "step_history": new_history}
             log.warning("[fill] drift after fill — env.status=%s", env.status)
             return {
                 "status": "paused",
