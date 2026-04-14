@@ -28,14 +28,16 @@ async def list_jobs(
     request: Request,
     provider: str | None = None,
     state: str | None = None,
+    exclude: str | None = None,
     keyword: str | None = None,
     limit: int = 50,
 ) -> dict[str, list[Job]]:
     repo: SqliteJobRepository = request.app.state.job_repository
+    exclude_states = [s.strip() for s in exclude.split(",") if s.strip()] if exclude else None
     jobs = (
-        await repo.list_by_provider(provider, limit=limit, state=state, keyword=keyword)
+        await repo.list_by_provider(provider, limit=limit, state=state, exclude_states=exclude_states, keyword=keyword)
         if provider
-        else await repo.list_all(limit=limit, state=state, keyword=keyword)
+        else await repo.list_all(limit=limit, state=state, exclude_states=exclude_states, keyword=keyword)
     )
     return {"jobs": jobs}
 

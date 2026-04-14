@@ -167,6 +167,7 @@ class SqliteJobRepository:
         provider: str,
         limit: int = 50,
         state: str | None = None,
+        exclude_states: list[str] | None = None,
         keyword: str | None = None,
     ) -> list[Job]:
         conditions = ["j.provider = ?"]
@@ -174,6 +175,10 @@ class SqliteJobRepository:
         if state:
             conditions.append("j.state = ?")
             params.append(state)
+        if exclude_states:
+            placeholders = ",".join("?" * len(exclude_states))
+            conditions.append(f"j.state NOT IN ({placeholders})")
+            params.extend(exclude_states)
         if keyword:
             conditions.append(
                 "EXISTS (SELECT 1 FROM job_search_tags jst2 WHERE jst2.job_id = j.id AND jst2.keyword = ?)"
@@ -193,6 +198,7 @@ class SqliteJobRepository:
         self,
         limit: int = 50,
         state: str | None = None,
+        exclude_states: list[str] | None = None,
         keyword: str | None = None,
     ) -> list[Job]:
         conditions: list[str] = []
@@ -200,6 +206,10 @@ class SqliteJobRepository:
         if state:
             conditions.append("j.state = ?")
             params.append(state)
+        if exclude_states:
+            placeholders = ",".join("?" * len(exclude_states))
+            conditions.append(f"j.state NOT IN ({placeholders})")
+            params.extend(exclude_states)
         if keyword:
             conditions.append(
                 "EXISTS (SELECT 1 FROM job_search_tags jst2 WHERE jst2.job_id = j.id AND jst2.keyword = ?)"
