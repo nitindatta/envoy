@@ -47,6 +47,16 @@ _SELECT_JOBS = """
       FROM jobs j
 """
 
+# Condition that excludes jobs with a live (non-terminal) application, regardless of job.state.
+# Prevents stale job.state from making a job appear in two lists at once.
+_NO_ACTIVE_APP = (
+    "NOT EXISTS ("
+    "  SELECT 1 FROM applications a"
+    "  WHERE a.job_id = j.id"
+    "  AND a.state NOT IN ('discarded', 'submitted')"
+    ")"
+)
+
 
 class SqliteJobRepository:
     """JobRepository implementation backed by aiosqlite.
@@ -68,10 +78,17 @@ class SqliteJobRepository:
         location: str | None,
         summary: str | None,
         payload: dict[str, Any],
-    ) -> str:
+    ) -> tuple[str, bool]:
+        """Upsert a job row. Returns (job_id, is_new).
+
+        is_new is True only when a fresh row was inserted. Existing rows with
+        state 'ignored' or 'in_review' are left untouched so user decisions
+        are preserved across repeated searches.
+        """
+        _SKIP_STATES = ("ignored", "in_review")
         now = datetime.now(timezone.utc).isoformat()
         existing = await self._db.execute(
-            "SELECT id FROM jobs WHERE provider = ? AND source_url = ?",
+            "SELECT id, state FROM jobs WHERE provider = ? AND source_url = ?",
             (provider, source_url),
         )
         existing_row = await existing.fetchone()
@@ -79,6 +96,9 @@ class SqliteJobRepository:
 
         if existing_row is not None:
             job_id = existing_row["id"]
+            if existing_row["state"] in _SKIP_STATES:
+                # Preserve the user's ignore/review decision — do not refresh.
+                return job_id, False
             await self._db.execute(
                 """
                 UPDATE jobs
@@ -102,6 +122,8 @@ class SqliteJobRepository:
                     job_id,
                 ),
             )
+            await self._db.commit()
+            return job_id, False
         else:
             job_id = str(uuid.uuid4())
             await self._db.execute(
@@ -126,8 +148,8 @@ class SqliteJobRepository:
                     now,
                 ),
             )
-        await self._db.commit()
-        return job_id
+            await self._db.commit()
+            return job_id, True
 
     async def get(self, job_id: str) -> Job | None:
         cursor = await self._db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
@@ -170,7 +192,7 @@ class SqliteJobRepository:
         exclude_states: list[str] | None = None,
         keyword: str | None = None,
     ) -> list[Job]:
-        conditions = ["j.provider = ?"]
+        conditions = ["j.provider = ?", _NO_ACTIVE_APP]
         params: list[Any] = [provider]
         if state:
             conditions.append("j.state = ?")
@@ -201,7 +223,7 @@ class SqliteJobRepository:
         exclude_states: list[str] | None = None,
         keyword: str | None = None,
     ) -> list[Job]:
-        conditions: list[str] = []
+        conditions: list[str] = [_NO_ACTIVE_APP]
         params: list[Any] = []
         if state:
             conditions.append("j.state = ?")
@@ -215,7 +237,7 @@ class SqliteJobRepository:
                 "EXISTS (SELECT 1 FROM job_search_tags jst2 WHERE jst2.job_id = j.id AND jst2.keyword = ?)"
             )
             params.append(keyword.strip().lower())
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        where = f"WHERE {' AND '.join(conditions)}"
         params.append(limit)
         cursor = await self._db.execute(
             f"{_SELECT_JOBS} {where} ORDER BY j.discovered_at DESC LIMIT ?",

@@ -101,6 +101,13 @@ def build_prepare_graph(
             return {"error": f"job {state.job_id} not found"}
 
         if existing_app_id:
+            # Check if the app was cancelled while prepare was in-flight.
+            # If so, skip the update — the cancel already set the terminal state.
+            current = await app_repo.get(existing_app_id)
+            if current is not None and current.state == "discarded":
+                log.info("[persist] app was cancelled mid-flight — skipping update application_id=%s", existing_app_id)
+                return {"error": "application cancelled during prepare"}
+
             # Update the pre-created "preparing" shell
             new_state = "prepared" if state.is_suitable else "unsuitable"
             await app_repo.update_after_prepare(
@@ -110,6 +117,8 @@ def build_prepare_graph(
                 new_state=new_state,
             )
             app_id = existing_app_id
+            # Ensure job stays in_review even if cancel briefly reset it.
+            await job_repo.update_state(state.job_id, "in_review")
             log.info("[persist] updated application_id=%s for job=%s suitable=%s state=%s",
                      app_id, state.job_id, state.is_suitable, new_state)
         else:

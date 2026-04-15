@@ -46,7 +46,7 @@ def build_search_graph(
     async def persist_jobs(state: SearchState) -> dict[str, object]:
         ids: list[str] = []
         for job in state.discovered:
-            job_id = await repository.upsert(
+            job_id, is_new = await repository.upsert(
                 provider=state.provider,
                 source_url=job.url,
                 canonical_key=f"{state.provider}:{job.provider_job_id}",
@@ -56,8 +56,9 @@ def build_search_graph(
                 summary=job.snippet,
                 payload=job.model_dump(),
             )
-            await repository.tag_job(job_id, state.keywords)
-            ids.append(job_id)
+            if is_new:
+                await repository.tag_job(job_id, state.keywords)
+                ids.append(job_id)
         return {"persisted_job_ids": ids}
 
     graph: StateGraph = StateGraph(SearchState)
