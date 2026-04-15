@@ -12,9 +12,15 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ok, error, type ToolResponse } from '../envelope.js';
 import { createSession, getSession, closeSession } from './sessions.js';
-import { inspectStep, type StepInfo } from './inspector.js';
+import { inspectStep, type StepInfo, type InspectOptions } from './inspector.js';
 import { saveSnapshot } from './snapshot.js';
 import { getOrLaunchChrome, getProfileDir } from './chrome.js';
+import {
+  isConfirmationPage as seekIsConfirmation,
+  isExternalPortalUrl as seekIsExternalPortal,
+  detectPortalType as seekDetectPortalType,
+  startApply as seekStartApply,
+} from '../providers/seek/apply.js';
 
 const PROVIDER_LOGIN_URLS: Record<string, string> = {
   seek: 'https://www.seek.com.au/oauth/login/',
@@ -23,6 +29,18 @@ const PROVIDER_LOGIN_URLS: Record<string, string> = {
 
 function sessionError(key: string) {
   return error('session_not_found', `no active session for key ${key}`);
+}
+
+/** Return provider-specific inspect options so inspectStep stays generic. */
+function inspectOptsFor(provider: string): InspectOptions {
+  if (provider === 'seek') {
+    return {
+      isConfirmation: (text) => seekIsConfirmation(text),
+      isExternalPortal: (url) => seekIsExternalPortal(url),
+      detectPortalType: (url) => seekDetectPortalType(url),
+    };
+  }
+  return {};
 }
 
 export function registerBrowserRoutes(app: FastifyInstance): void {
@@ -60,7 +78,7 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     const session = getSession(parsed.data.session_key);
     if (!session) return sessionError(parsed.data.session_key);
 
-    const result = await inspectStep(session.page);
+    const result = await inspectStep(session.page, inspectOptsFor(session.provider));
     if (!result.ok) {
       // Take a snapshot for the drift signal
       const snapshotPath = await saveSnapshot(session.page, 'drift');
@@ -254,25 +272,27 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     // Click the action button — strip zero-width chars from label before matching
     const cleanLabel = parsed.data.action_label.replace(/[\u2060\u200b\u200c\u200d\uFEFF]/g, '').trim();
     const prevUrl = session.page.url();
-    await session.page
+    const actionBtn = session.page
       .getByRole('button', { name: cleanLabel, exact: false })
-      .first()
-      .click({ timeout: 30_000 });
+      .first();
+    await actionBtn.click({ timeout: 30_000 });
 
     // SEEK is a SPA — waitForLoadState('domcontentloaded') never fires on step transitions.
-    // Instead: wait for URL change OR for the button to disappear (step changed).
-    // Fall back to a fixed 3s wait so we don't burn 30s every step.
+    // Wait for the button we just clicked to detach/hide (the page has moved on),
+    // OR for the URL to change, OR fall back to a fixed 5s wait.
+    //
+    // NOTE: do NOT use `waitForSelector('button:not(:has-text(...))')` — that matches
+    // any other button on the page immediately, resolving the race before SEEK has
+    // actually navigated, which causes the inspector to see the pre-submit page.
     await Promise.race([
-      session.page.waitForURL((url) => url.toString() !== prevUrl, { timeout: 5_000 }).catch(() => {}),
-      session.page.waitForSelector(
-        `button:not(:has-text("${cleanLabel}"))`,
-        { state: 'attached', timeout: 5_000 }
-      ).catch(() => {}),
-      session.page.waitForTimeout(3_000),
+      session.page.waitForURL((url) => url.toString() !== prevUrl, { timeout: 8_000 }).catch(() => {}),
+      actionBtn.waitFor({ state: 'detached', timeout: 6_000 }).catch(() => {}),
+      actionBtn.waitFor({ state: 'hidden', timeout: 6_000 }).catch(() => {}),
+      session.page.waitForTimeout(5_000),
     ]);
 
-    // Inspect the new step
-    const result = await inspectStep(session.page);
+    // Inspect the new step using provider-specific options
+    const result = await inspectStep(session.page, inspectOptsFor(session.provider));
     if (!result.ok) {
       const snapshotPath = await saveSnapshot(session.page, 'drift');
       return {
@@ -368,114 +388,18 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     const session = getSession(parsed.data.session_key);
     if (!session) return sessionError(parsed.data.session_key);
 
-    // Navigate to the job page first, then find and click the Apply button
-    await session.page.goto(parsed.data.job_url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await session.page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
-    await session.page.waitForTimeout(1_500);
-
-    // Check if we need to log in before we can even see the Apply button
-    const preClickUrl = session.page.url();
-    if (isLoginUrl(preClickUrl)) {
-      return {
-        status: 'needs_human' as const,
-        data: { reason: 'auth_required', login_url: preClickUrl },
-      };
-    }
-
-    // Click "Apply" button
-    try {
-      await session.page
-        .getByRole('link', { name: /apply/i })
-        .or(session.page.getByRole('button', { name: /apply/i }))
-        .first()
-        .click({ timeout: 10_000 });
-    } catch {
-      // Button not found — check if we got redirected to login before the click
-      const urlNow = session.page.url();
-      if (isLoginUrl(urlNow)) {
-        return {
-          status: 'needs_human' as const,
-          data: { reason: 'auth_required', login_url: urlNow },
-        };
+    if (parsed.data.provider === 'seek') {
+      const result = await seekStartApply(session.page, parsed.data.job_url);
+      if (result.status === 'needs_human') {
+        return { status: 'needs_human' as const, data: { reason: result.reason, login_url: result.login_url } };
       }
-      return error('apply_button_not_found', `Could not find Apply button on ${urlNow}`);
-    }
-
-    await session.page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
-    await session.page.waitForTimeout(2_000);
-
-    let applyUrl = session.page.url();
-
-    // Redirected to login after clicking Apply
-    if (isLoginUrl(applyUrl)) {
-      return {
-        status: 'needs_human' as const,
-        data: { reason: 'auth_required', login_url: applyUrl },
-      };
-    }
-
-    // SEEK's own /apply/external intermediate page — click through to the employer's actual portal
-    if (applyUrl.includes('seek.com.au') && applyUrl.includes('/apply/external')) {
-      try {
-        // Try role-based selectors first, then fall back to any external href on the page
-        const clicked = await session.page
-          .getByRole('link', { name: /continue|apply|proceed|go to/i })
-          .or(session.page.getByRole('button', { name: /continue|apply|proceed|go to/i }))
-          .first()
-          .click({ timeout: 6_000 })
-          .then(() => true)
-          .catch(() => false);
-
-        if (!clicked) {
-          // Last resort: find any anchor pointing off seek.com.au and click it
-          const externalHref = await session.page.evaluate(() => {
-            const a = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))
-              .find((el) => el.href && !el.href.includes('seek.com.au'));
-            return a ? a.href : null;
-          });
-          if (externalHref) {
-            await session.page.goto(externalHref, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          }
-        }
-
-        await session.page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
-        await session.page.waitForTimeout(2_000);
-      } catch {
-        // Navigation failed — will be flagged as external below
+      if (result.status === 'error') {
+        return error(result.type, result.message);
       }
-      applyUrl = session.page.url();
+      return ok({ apply_url: result.apply_url, is_external_portal: result.is_external_portal, portal_type: result.portal_type });
     }
 
-    // External if we left seek.com.au, OR if click-through failed and we're still on /apply/external
-    const is_external_portal =
-      !applyUrl.includes('seek.com.au') ||
-      (applyUrl.includes('seek.com.au') && applyUrl.includes('/apply/external'));
-    const portal_type = is_external_portal ? detectPortalType(applyUrl) : null;
-
-    return ok({ apply_url: applyUrl, is_external_portal, portal_type });
+    return error('unsupported_provider', `start_apply not implemented for provider: ${parsed.data.provider}`);
   });
 }
 
-function isLoginUrl(url: string): boolean {
-  return (
-    url.includes('/oauth/') ||
-    url.includes('/sign-in') ||
-    url.includes('/signin') ||
-    url.includes('/login') ||
-    url.includes('accounts.seek.com.au')
-  );
-}
-
-function detectPortalType(url: string): string {
-  if (url.includes('workday.com')) return 'workday';
-  if (url.includes('myworkdayjobs.com')) return 'workday';
-  if (url.includes('greenhouse.io')) return 'greenhouse';
-  if (url.includes('lever.co')) return 'lever';
-  if (url.includes('icims.com')) return 'icims';
-  if (url.includes('successfactors.com')) return 'successfactors';
-  if (url.includes('smartrecruiters.com')) return 'smartrecruiters';
-  if (url.includes('jobvite.com')) return 'jobvite';
-  if (url.includes('taleo.net')) return 'taleo';
-  if (url.includes('bamboohr.com')) return 'bamboohr';
-  return 'unknown';
-}

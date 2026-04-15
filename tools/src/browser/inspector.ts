@@ -30,26 +30,33 @@ export type InspectResult =
   | { ok: true; step: StepInfo }
   | { ok: false; reason: string };
 
-export async function inspectStep(page: Page): Promise<InspectResult> {
+export type InspectOptions = {
+  /** Provider-specific function to detect a confirmation/success page from its body text. */
+  isConfirmation?: (pageText: string, url: string) => boolean;
+  /** Provider-specific function to detect whether the URL is an external portal. */
+  isExternalPortal?: (url: string) => boolean;
+  /** Provider-specific function to identify the portal type from URL. */
+  detectPortalType?: (url: string) => string | null;
+};
+
+export async function inspectStep(page: Page, opts: InspectOptions = {}): Promise<InspectResult> {
   const url = page.url();
-  // External if we're off seek.com.au entirely, or still on SEEK's own /apply/external redirect stub
-  const is_external_portal =
-    !url.includes('seek.com.au') ||
-    (url.includes('seek.com.au') && url.includes('/apply/external'));
-  const portal_type = is_external_portal ? detectPortalType(url) : null;
+
+  const isExternal = opts.isExternalPortal ?? (() => false);
+  const getPortalType = opts.detectPortalType ?? (() => null);
+  const checkConfirmation = opts.isConfirmation ?? (() => false);
+
+  const is_external_portal = isExternal(url);
+  const portal_type = is_external_portal ? getPortalType(url) : null;
 
   // Wait for the page to settle on external portals (they often render async)
   if (is_external_portal) {
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
   }
 
-  // Detect confirmation page (works on any domain)
+  // Detect confirmation page using provider-supplied checker
   const pageText = await page.evaluate(() => document.body.innerText).catch(() => '');
-  if (
-    /application (submitted|received|successful|complete)/i.test(pageText) ||
-    /thank you for applying/i.test(pageText) ||
-    /your application has been (submitted|received)/i.test(pageText)
-  ) {
+  if (checkConfirmation(pageText, url)) {
     return {
       ok: true,
       step: {
@@ -258,10 +265,3 @@ async function extractFields(page: Page): Promise<FieldInfo[]> {
   }) as unknown as FieldInfo[];
 }
 
-function detectPortalType(url: string): string {
-  if (url.includes('workday.com')) return 'workday';
-  if (url.includes('greenhouse.io')) return 'greenhouse';
-  if (url.includes('lever.co')) return 'lever';
-  if (url.includes('icims.com')) return 'icims';
-  return 'unknown';
-}

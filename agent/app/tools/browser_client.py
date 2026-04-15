@@ -55,8 +55,8 @@ async def inspect_apply_step(client: ToolClient, session_key: str):
     env = await client.call(
         "/tools/browser/inspect_apply_step", {"session_key": session_key}
     )
-    if env.status in ("drift", "needs_human"):
-        log.warning("[inspect_apply_step] status=%s", env.status)
+    if env.status == "drift":
+        log.warning("[inspect_apply_step] drift: %s", env.status)
         return None, env
     data = _require_ok(env, "inspect_apply_step")
     step = StepInfo.model_validate(data)
@@ -116,18 +116,34 @@ async def close_session(client: ToolClient, session_key: str) -> None:
         log.warning("[close_session] cleanup error (ignored): %s", env.error)
 
 
+class NeedsHumanError(Exception):
+    """Raised when tools/ returns status='needs_human' (e.g. auth required)."""
+    def __init__(self, reason: str, login_url: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.login_url = login_url
+
+
 async def start_apply(
     client: ToolClient, session_key: str, provider: str, job_url: str
 ) -> dict:
     """Navigate to job page, click Apply, detect external redirect.
 
     Returns dict with keys: apply_url, is_external_portal, portal_type.
+    Raises NeedsHumanError if auth is required.
+    Raises BrowserToolError on other errors.
     """
     log.info("[start_apply] session=%s provider=%s url=%s", session_key, provider, job_url)
     env = await client.call(
         "/tools/providers/start_apply",
         {"session_key": session_key, "provider": provider, "job_url": job_url},
     )
+    if env.status == "needs_human":
+        data = env.data or {}
+        raise NeedsHumanError(
+            reason=data.get("reason", "auth_required"),
+            login_url=data.get("login_url", ""),
+        )
     data = _require_ok(env, "start_apply")
     log.info("[start_apply] result: is_external=%s portal_type=%s",
              data.get("is_external_portal"), data.get("portal_type"))

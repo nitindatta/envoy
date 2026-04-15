@@ -87,8 +87,9 @@ def build_apply_graph(
             log.warning("[recover] application not found: %s", state.application_id)
             return None
 
+        provider = app.source_provider or "seek"
         try:
-            new_key = await launch_session(tool_client, provider="seek")
+            new_key = await launch_session(tool_client, provider=provider)
             log.info("[recover] new session_key=%s — replaying %d history steps",
                      new_key, len(state.step_history))
         except (BrowserToolError, ToolServiceError) as exc:
@@ -98,7 +99,7 @@ def build_apply_graph(
         try:
             env = await tool_client.call(
                 "/tools/providers/start_apply",
-                {"session_key": new_key, "provider": "seek", "job_url": app.source_url},
+                {"session_key": new_key, "provider": provider, "job_url": app.source_url},
             )
             if env.status not in ("ok",):
                 log.warning("[recover] start_apply returned status=%s", env.status)
@@ -134,8 +135,9 @@ def build_apply_graph(
             log.warning("[launch] application not found: %s", state.application_id)
             return {"status": "failed", "error": f"application {state.application_id} not found"}
 
+        provider = app.source_provider or "seek"
         try:
-            session_key = await launch_session(tool_client, provider="seek")
+            session_key = await launch_session(tool_client, provider=provider)
             log.info("[launch] session_key=%s url=%s", session_key, app.source_url)
         except (BrowserToolError, ToolServiceError) as exc:
             log.error("[launch] launch_session failed: %s", exc)
@@ -143,7 +145,7 @@ def build_apply_graph(
 
         # Record session in DB for stale cleanup
         await session_repo.create(
-            provider="seek",
+            provider=provider,
             session_key=session_key,
             application_id=state.application_id,
         )
@@ -151,7 +153,7 @@ def build_apply_graph(
         try:
             env = await tool_client.call(
                 "/tools/providers/start_apply",
-                {"session_key": session_key, "provider": "seek", "job_url": app.source_url},
+                {"session_key": session_key, "provider": provider, "job_url": app.source_url},
             )
         except ToolServiceError as exc:
             log.error("[launch] start_apply failed: %s", exc)
@@ -336,7 +338,19 @@ def build_apply_graph(
             log.info("[submit] confirmed — application submitted")
             return {"current_step": next_step, "status": "completed"}
 
-        log.warning("[submit] unexpected page after submit: page_type=%s", next_step.page_type)
+        # 0-field form page after submit = still on the review/summary page.
+        # The button click didn't navigate — likely a timing issue.
+        # Pause so the user can retry rather than silently mark as applied.
+        if next_step.page_type == "form" and len(next_step.fields) == 0:
+            log.warning("[submit] still on review page after submit click — pausing for retry")
+            return {
+                "current_step": next_step,
+                "status": "awaiting_submit",
+                "submit_action_label": state.submit_action_label,
+            }
+
+        log.warning("[submit] unexpected page after submit: page_type=%s url=%s",
+                    next_step.page_type, next_step.page_url)
         return {"current_step": next_step, "status": "completed"}
 
     # ── fill ───────────────────────────────────────────────────────────────
