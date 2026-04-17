@@ -15,7 +15,7 @@ export function buildServer(secret: string) {
   // timeouts, etc.) and returns a proper tool envelope instead of HTTP 500.
   // Without this, any unexpected Playwright throw crashes the route and the agent
   // receives a raw 500 it cannot parse as an error envelope.
-  app.setErrorHandler((err, _request, reply) => {
+  app.setErrorHandler((err: Error, _request, reply) => {
     app.log.error(err);
     reply.status(200).send({
       status: 'error',

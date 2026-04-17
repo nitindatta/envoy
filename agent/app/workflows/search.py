@@ -54,7 +54,8 @@ def build_search_graph(
                 company=job.company,
                 location=job.location,
                 summary=job.snippet,
-                payload=job.model_dump(),
+                payload=job.model_dump(mode="json"),
+                posted_at=job.posted_at,
             )
             if is_new:
                 await repository.tag_job(job_id, state.keywords)

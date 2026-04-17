@@ -238,6 +238,50 @@ function AppListItem({ app, selected, onClick }: {
 }
 
 // ---------------------------------------------------------------------------
+// Shared cover letter section
+// ---------------------------------------------------------------------------
+
+function CoverLetterSection({ text, onChange, readOnly }: {
+  text: string;
+  onChange?: (v: string) => void;
+  readOnly?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  if (!text) return null;
+  return (
+    <div style={{ marginBottom: "1.5rem" }}>
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 14, fontWeight: 600, color: "#374151", display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}
+      >
+        <span>{collapsed ? "▸" : "▾"}</span> Cover Letter
+      </button>
+      {!collapsed && (
+        <textarea
+          value={text}
+          onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+          readOnly={readOnly}
+          rows={12}
+          style={{
+            width: "100%",
+            padding: "0.75rem",
+            border: "1px solid #d1d5db",
+            borderRadius: 6,
+            fontFamily: "inherit",
+            fontSize: 13,
+            resize: "vertical",
+            whiteSpace: "pre-wrap",
+            boxSizing: "border-box",
+            background: readOnly ? "#f9fafb" : "#fff",
+            color: "#374151",
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Right-panel state panels
 // ---------------------------------------------------------------------------
 
@@ -903,6 +947,7 @@ export default function ReviewDeskPage() {
         return (
           <>
             {header}
+            <CoverLetterSection text={coverLetterText} readOnly />
             <div
               style={{
                 padding: "1.25rem",
@@ -956,6 +1001,7 @@ export default function ReviewDeskPage() {
       return (
         <>
           {header}
+          <CoverLetterSection text={coverLetterText} onChange={setCoverLetterText} />
           <div
             style={{
               padding: "1.25rem",
@@ -1005,6 +1051,7 @@ export default function ReviewDeskPage() {
       return (
         <>
           {header}
+          <CoverLetterSection text={coverLetterText} readOnly />
           <GatePanel
             appStep={parsedApplyStep}
             gateAnswers={gateAnswers}
@@ -1025,6 +1072,7 @@ export default function ReviewDeskPage() {
       return (
         <>
           {header}
+          <CoverLetterSection text={coverLetterText} readOnly />
           <AwaitingSubmitPanel
             appStep={parsedApplyStep}
             onSubmit={(correctedValues) => submitMutation.mutate({ appId, runId: parsedApplyStep.workflow_run_id, label: parsedApplyStep.submit_action_label ?? "Submit Application", correctedValues })}
@@ -1043,6 +1091,7 @@ export default function ReviewDeskPage() {
       return (
         <>
           {header}
+          <CoverLetterSection text={coverLetterText} onChange={setCoverLetterText} />
           <div
             style={{
               padding: "1.25rem",

@@ -8,7 +8,7 @@ error envelopes so the workflow can route them to the right handler.
 from __future__ import annotations
 
 from app.state.envelope import ToolDrift, ToolError
-from app.state.jobs import SeekJob
+from app.state.provider_job import ProviderJob
 from app.tools.client import ToolClient
 
 
@@ -30,7 +30,7 @@ async def search_seek(
     keywords: str,
     location: str | None = None,
     max_pages: int = 1,
-) -> list[SeekJob]:
+) -> list[ProviderJob]:
     payload: dict[str, object] = {"keywords": keywords, "max_pages": max_pages}
     if location is not None:
         payload["location"] = location
@@ -51,4 +51,4 @@ async def search_seek(
     raw_jobs = envelope.data.get("jobs", [])
     if not isinstance(raw_jobs, list):
         raise SeekToolError(ToolError(type="bad_payload", message="jobs is not a list"))
-    return [SeekJob.model_validate(item) for item in raw_jobs]
+    return [ProviderJob.model_validate(item) for item in raw_jobs]

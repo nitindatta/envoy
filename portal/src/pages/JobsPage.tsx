@@ -3,6 +3,16 @@ import { fetchJobs, fetchSearchTags, ignoreJob, queueJob, runSearch } from "@/ap
 import { useState } from "react";
 import type { Job } from "@/api/schemas";
 
+function postedAgo(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 function JobCard({ job, onReview, onIgnore, isPending, onTagClick }: {
   job: Job;
   onReview: () => void;
@@ -103,7 +113,7 @@ function JobCard({ job, onReview, onIgnore, isPending, onTagClick }: {
 
         {/* Footer: posted date + actions */}
         <div className="flex items-center justify-between gap-2 mt-1">
-          <span className="text-slate-400 text-xs">{meta.posted_at ?? ""}</span>
+          <span className="text-slate-400 text-xs">{postedAgo(job.posted_at)}</span>
           <div className="flex gap-2">
             <button
               onClick={onReview}

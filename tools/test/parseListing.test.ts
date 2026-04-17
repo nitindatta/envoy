@@ -87,7 +87,7 @@ describe('parseListing (SEEK fixture)', () => {
     const jobs = parseListing(fixtureHtml);
     const withLogo = jobs.filter((j) => j.logo_url !== null);
     expect(withLogo.length).toBeGreaterThan(0);
-    expect(withLogo[0].logo_url).toMatch(/^https:\/\//);
+    expect(withLogo[0]!.logo_url).toMatch(/^https:\/\//);
   });
 
   it('extracts tags for badge cards', () => {

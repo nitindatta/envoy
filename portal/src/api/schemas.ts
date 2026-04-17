@@ -30,6 +30,7 @@ export const jobSchema = z.object({
   summary: z.string().nullable(),
   payload: listingMetaSchema,
   state: z.string().default("discovered"),
+  posted_at: z.string().nullable().optional(),
   discovered_at: z.string(),
   last_seen_at: z.string(),
   search_tags: z.array(z.string()).optional().default([]),

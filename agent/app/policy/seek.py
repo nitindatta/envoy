@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.state.jobs import SeekJob
+from app.state.provider_job import ProviderJob
 
 
 # Lowercase company names to drop outright.
@@ -39,7 +39,7 @@ class BlockReason:
     detail: str
 
 
-def is_blocked(job: SeekJob) -> BlockReason | None:
+def is_blocked(job: ProviderJob) -> BlockReason | None:
     """Return the reason this job is blocked, or None if it passes the filter."""
     company_lower = job.company.strip().lower()
     if company_lower in BLOCKED_COMPANIES:

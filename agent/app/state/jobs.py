@@ -11,29 +11,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.state.provider_job import ProviderJob
 
-class SeekJob(BaseModel):
-    """A single job as returned by the tools/ SEEK search route.
-
-    This mirrors the response shape from `POST /tools/providers/seek/search`
-    and is the contract between agent/ and tools/. Do not add fields here
-    without updating the tools/ side too.
-    """
-
-    provider_job_id: str
-    title: str
-    company: str
-    location: str | None = None
-    url: str
-    posted_at: str | None = None
-    snippet: str | None = None
-    # Rich listing metadata — null/empty when not present on the listing
-    salary: str | None = None
-    work_type: str | None = None
-    work_arrangement: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    logo_url: str | None = None
-    bullet_points: list[str] = Field(default_factory=list)
+# Backward-compat alias — prefer importing ProviderJob directly.
+SeekJob = ProviderJob
 
 
 class SearchRequest(BaseModel):
@@ -64,6 +45,7 @@ class Job(BaseModel):
     state: str = "discovered"  # discovered | in_review | ignored
     discovered_at: datetime
     last_seen_at: datetime
+    posted_at: datetime | None = None
     search_tags: list[str] = Field(default_factory=list)  # keywords that surfaced this job
 
 

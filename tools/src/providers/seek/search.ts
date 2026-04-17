@@ -3,29 +3,16 @@ import { z } from 'zod';
 import { error, ok, type ToolResponse } from '../../envelope.js';
 import { getOrLaunchChrome as launchChrome } from '../../browser/chrome.js';
 import { parseListing_guarded } from './parseListing.js';
+import { type ProviderJob } from '../types.js';
+
+// Re-export alias for backward compatibility with code that imports SeekJob from this module.
+export type SeekJob = ProviderJob;
 
 const SearchRequestSchema = z.object({
   keywords: z.string().min(1),
   location: z.string().optional(),
   max_pages: z.number().int().min(1).max(10).default(1),
 });
-
-export type SeekJob = {
-  provider_job_id: string;
-  title: string;
-  company: string;
-  location: string | null;
-  url: string;
-  posted_at: string | null;
-  snippet: string | null;
-  // Rich listing metadata — null/empty when not present on the listing
-  salary: string | null;
-  work_type: string | null;
-  work_arrangement: string | null;
-  tags: string[];
-  logo_url: string | null;
-  bullet_points: string[];
-};
 
 function buildSeekUrl(keywords: string, location?: string): string {
   const kw = keywords.trim().toLowerCase().replace(/\s+/g, '-');
@@ -43,7 +30,7 @@ export function registerSeekSearchRoute(app: FastifyInstance): void {
     }
 
     const { keywords, location, max_pages } = parsed.data;
-    const allJobs: SeekJob[] = [];
+    const allJobs: ProviderJob[] = [];
 
     const context = await launchChrome();
     const page = await context.newPage();

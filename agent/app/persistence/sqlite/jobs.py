@@ -34,6 +34,7 @@ def _row_to_job(row: aiosqlite.Row) -> Job:
         state=row["state"] if "state" in keys else "discovered",
         discovered_at=datetime.fromisoformat(row["discovered_at"]),
         last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
+        posted_at=datetime.fromisoformat(row["posted_at"]) if row["posted_at"] else None,
         search_tags=search_tags,
     )
 
@@ -78,6 +79,7 @@ class SqliteJobRepository:
         location: str | None,
         summary: str | None,
         payload: dict[str, Any],
+        posted_at: datetime | None = None,
     ) -> tuple[str, bool]:
         """Upsert a job row. Returns (job_id, is_new).
 
@@ -99,29 +101,56 @@ class SqliteJobRepository:
             if existing_row["state"] in _SKIP_STATES:
                 # Preserve the user's ignore/review decision — do not refresh.
                 return job_id, False
-            await self._db.execute(
-                """
-                UPDATE jobs
-                   SET canonical_key = ?,
-                       title = ?,
-                       company = ?,
-                       location = ?,
-                       summary = ?,
-                       payload_json = ?,
-                       last_seen_at = ?
-                 WHERE id = ?
-                """,
-                (
-                    canonical_key,
-                    title,
-                    company,
-                    location,
-                    summary,
-                    json.dumps(payload),
-                    now,
-                    job_id,
-                ),
-            )
+            if posted_at is not None:
+                await self._db.execute(
+                    """
+                    UPDATE jobs
+                       SET canonical_key = ?,
+                           title = ?,
+                           company = ?,
+                           location = ?,
+                           summary = ?,
+                           payload_json = ?,
+                           last_seen_at = ?,
+                           posted_at = ?
+                     WHERE id = ?
+                    """,
+                    (
+                        canonical_key,
+                        title,
+                        company,
+                        location,
+                        summary,
+                        json.dumps(payload),
+                        now,
+                        posted_at.isoformat(),
+                        job_id,
+                    ),
+                )
+            else:
+                await self._db.execute(
+                    """
+                    UPDATE jobs
+                       SET canonical_key = ?,
+                           title = ?,
+                           company = ?,
+                           location = ?,
+                           summary = ?,
+                           payload_json = ?,
+                           last_seen_at = ?
+                     WHERE id = ?
+                    """,
+                    (
+                        canonical_key,
+                        title,
+                        company,
+                        location,
+                        summary,
+                        json.dumps(payload),
+                        now,
+                        job_id,
+                    ),
+                )
             await self._db.commit()
             return job_id, False
         else:
@@ -131,8 +160,8 @@ class SqliteJobRepository:
                 INSERT INTO jobs (
                     id, provider, source_url, canonical_key,
                     title, company, location, summary,
-                    payload_json, discovered_at, last_seen_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    payload_json, discovered_at, last_seen_at, posted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -146,6 +175,7 @@ class SqliteJobRepository:
                     json.dumps(payload),
                     now,
                     now,
+                    posted_at.isoformat() if posted_at else None,
                 ),
             )
             await self._db.commit()
@@ -209,7 +239,7 @@ class SqliteJobRepository:
         where = " AND ".join(conditions)
         params.append(limit)
         cursor = await self._db.execute(
-            f"{_SELECT_JOBS} WHERE {where} ORDER BY j.discovered_at DESC LIMIT ?",
+            f"{_SELECT_JOBS} WHERE {where} ORDER BY COALESCE(j.posted_at, j.discovered_at) DESC LIMIT ?",
             params,
         )
         rows = await cursor.fetchall()
@@ -240,7 +270,7 @@ class SqliteJobRepository:
         where = f"WHERE {' AND '.join(conditions)}"
         params.append(limit)
         cursor = await self._db.execute(
-            f"{_SELECT_JOBS} {where} ORDER BY j.discovered_at DESC LIMIT ?",
+            f"{_SELECT_JOBS} {where} ORDER BY COALESCE(j.posted_at, j.discovered_at) DESC LIMIT ?",
             params,
         )
         rows = await cursor.fetchall()

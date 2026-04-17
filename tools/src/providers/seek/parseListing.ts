@@ -1,6 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { z } from 'zod';
-import type { SeekJob } from './search.js';
+import { type ProviderJob, providerJobSchema } from '../types.js';
 
 /**
  * Selectors derived from tools/test/fixtures/seek/listing.html (April 2026).
@@ -34,17 +33,36 @@ const ARRANGEMENT_KEYWORDS = new Set([
 const BASE_URL = 'https://www.seek.com.au';
 
 /**
- * Parse a SEEK search results page (raw HTML string) into SeekJob records.
+ * Converts SEEK relative age strings (e.g. "1d ago", "3h ago", "30m ago")
+ * to ISO 8601 timestamps. Returns null for unrecognised formats.
+ */
+export function parseRelativeAge(text: string, now: Date = new Date()): string | null {
+  if (!text) return null;
+  const t = text.trim().toLowerCase();
+  const match = t.match(/^(\d+)(d|h|m)\s+ago$/);
+  if (match) {
+    const n = parseInt(match[1]!, 10);
+    const unit = match[2]!; // regex group 2 is always present when match is truthy
+    const ms = unit === 'd' ? n * 86_400_000 : unit === 'h' ? n * 3_600_000 : n * 60_000;
+    return new Date(now.getTime() - ms).toISOString();
+  }
+  // "just now", "just posted", "today"
+  if (/just|today/.test(t)) return now.toISOString();
+  return null;
+}
+
+/**
+ * Parse a SEEK search results page (raw HTML string) into ProviderJob records.
  * Pure function — no network or browser calls. Safe to test against a fixture.
  *
  * Returns [] if no cards found (caller should treat as drift).
  */
-export function parseListing(html: string): SeekJob[] {
+export function parseListing(html: string): ProviderJob[] {
   const dom = new JSDOM(html);
   const doc = dom.window.document;
 
   const cards = Array.from(doc.querySelectorAll(SELECTORS.card));
-  const jobs: SeekJob[] = [];
+  const jobs: ProviderJob[] = [];
 
   for (const card of cards) {
     const jobId = card.getAttribute('data-job-id');
@@ -92,9 +110,9 @@ export function parseListing(html: string): SeekJob[] {
       .map((li) => li.textContent?.trim() ?? '')
       .filter(Boolean);
 
-    // Posted-at text (e.g. "1d ago", "3h ago")
+    // Posted-at: convert relative age string to ISO 8601 timestamp
     const postedAtEl = card.querySelector(SELECTORS.postedAt);
-    const posted_at = postedAtEl?.textContent?.trim() || null;
+    const posted_at = parseRelativeAge(postedAtEl?.textContent?.trim() ?? '');
 
     // Salary (e.g. "$200k - $220k p.a.", "Up to $1000/day")
     const salaryEl = card.querySelector(SELECTORS.salary);
@@ -141,25 +159,8 @@ export function parseListing(html: string): SeekJob[] {
  * Schema guard — verifies the parsed output shape hasn't drifted.
  * Returns { ok: true, jobs } or { ok: false, reason }.
  */
-const seekJobSchema = z.object({
-  provider_job_id: z.string().min(1),
-  title: z.string().min(1),
-  company: z.string(),
-  location: z.string().nullable(),
-  url: z.string().url(),
-  posted_at: z.string().nullable(),
-  snippet: z.string().nullable(),
-  // Rich listing metadata — optional, populated when present
-  salary: z.string().nullable().optional(),
-  work_type: z.string().nullable().optional(),
-  work_arrangement: z.string().nullable().optional(),
-  tags: z.array(z.string()).optional(),
-  logo_url: z.string().nullable().optional(),
-  bullet_points: z.array(z.string()).optional(),
-});
-
 export type ParseResult =
-  | { ok: true; jobs: SeekJob[] }
+  | { ok: true; jobs: ProviderJob[] }
   | { ok: false; reason: string };
 
 export function parseListing_guarded(html: string): ParseResult {
@@ -170,7 +171,7 @@ export function parseListing_guarded(html: string): ParseResult {
   }
 
   for (const job of jobs) {
-    const result = seekJobSchema.safeParse(job);
+    const result = providerJobSchema.safeParse(job);
     if (!result.success) {
       return {
         ok: false,
