@@ -1,23 +1,77 @@
-import asyncio
+﻿import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 
-_log_fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s", datefmt="%H:%M:%S")
+_ROOT_DIR = Path(__file__).resolve().parents[2]
+_AGENT_LOG_PATH = _ROOT_DIR / "logs" / "agent.log"
+_APP_LOGGERS = {
+    "ai",
+    "answer_field",
+    "applications",
+    "apply",
+    "browser_client",
+    "cover_letter",
+    "jobs",
+    "prepare",
+    "queue_repo",
+    "queue_worker",
+}
+_NOISY_LOGGERS = {
+    "aiosqlite": logging.WARNING,
+    "httpcore": logging.WARNING,
+    "httpx": logging.INFO,
+    "openai": logging.INFO,
+    "multipart": logging.WARNING,
+    "uvicorn.access": logging.INFO,
+    "watchfiles": logging.WARNING,
+}
 
-_console = logging.StreamHandler()
-_console.setLevel(logging.INFO)
-_console.setFormatter(_log_fmt)
 
-_file = logging.FileHandler("../logs/agent.log", encoding="utf-8")
-_file.setLevel(logging.DEBUG)
-_file.setFormatter(_log_fmt)
+def _is_first_party_logger(logger_name: str) -> bool:
+    return logger_name == "app" or logger_name.startswith("app.") or logger_name in _APP_LOGGERS
 
-logging.root.setLevel(logging.DEBUG)
-logging.root.addHandler(_console)
-logging.root.addHandler(_file)
+
+class _AgentLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= logging.WARNING or _is_first_party_logger(record.name)
+
+
+def _configure_logging() -> None:
+    root = logging.getLogger()
+    if getattr(root, "_envoy_logging_configured", False):
+        return
+
+    log_fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s - %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(log_fmt)
+    console.addFilter(_AgentLogFilter())
+
+    _AGENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(_AGENT_LOG_PATH, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(log_fmt)
+    file_handler.addFilter(_AgentLogFilter())
+
+    root.setLevel(logging.DEBUG)
+    root.addHandler(console)
+    root.addHandler(file_handler)
+
+    for logger_name, level in _NOISY_LOGGERS.items():
+        logging.getLogger(logger_name).setLevel(level)
+
+    root._envoy_logging_configured = True  # type: ignore[attr-defined]
+
+
+_configure_logging()
 
 from app.api.applications import router as applications_router
 from app.api.health import router as health_router
@@ -30,7 +84,10 @@ from app.persistence.sqlite.job_analysis import SqliteJobAnalysisRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.persistence.sqlite.question_cache import SqliteQuestionCacheRepository
 from app.persistence.sqlite.queue import SqliteQueueRepository
-from app.persistence.sqlite.workflow_runs import SqliteWorkflowRunRepository, SqliteBrowserSessionRepository
+from app.persistence.sqlite.workflow_runs import (
+    SqliteBrowserSessionRepository,
+    SqliteWorkflowRunRepository,
+)
 from app.settings import get_settings
 from app.tools.client import ToolClient
 from app.worker.queue_worker import run_apply_worker, run_prepare_worker
@@ -59,9 +116,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         prepare_task.cancel()
         apply_task.cancel()
-        for t in (prepare_task, apply_task):
+        for task in (prepare_task, apply_task):
             try:
-                await t
+                await task
             except asyncio.CancelledError:
                 pass
         await app.state.tool_client.aclose()

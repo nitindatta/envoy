@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     repo_root: Path = Field(default=Path(__file__).resolve().parents[2])
     sqlite_path: Path = Field(default=Path("../automation/agent.db"))
     profile_path: Path = Field(default=Path("profile/nitin_datta_profile.json"))
+    raw_profile_path: Path = Field(default=Path("profile/raw_profile.json"))
+    profile_answers_path: Path = Field(default=Path("profile/profile_answers.json"))
+    profile_upload_dir: Path = Field(default=Path("automation/profile_uploads"))
 
     @property
     def resolved_sqlite_path(self) -> Path:
@@ -61,6 +64,31 @@ class Settings(BaseSettings):
         if self.profile_path.is_absolute():
             return self.profile_path
         return (self.repo_root / self.profile_path).resolve()
+
+    @property
+    def resolved_raw_profile_path(self) -> Path:
+        if self.raw_profile_path.is_absolute():
+            return self.raw_profile_path
+        return (self.repo_root / self.raw_profile_path).resolve()
+
+    @property
+    def resolved_profile_upload_dir(self) -> Path:
+        if self.profile_upload_dir.is_absolute():
+            return self.profile_upload_dir
+        return (self.repo_root / self.profile_upload_dir).resolve()
+
+    @property
+    def resolved_profile_answers_path(self) -> Path:
+        if self.profile_answers_path.is_absolute():
+            return self.profile_answers_path
+        return (self.repo_root / self.profile_answers_path).resolve()
+
+    @property
+    def resolved_target_profile_path(self) -> Path:
+        source = self.resolved_profile_path
+        if source.suffix:
+            return source.with_name(f"{source.stem}.canonical{source.suffix}")
+        return source.with_name(f"{source.name}.canonical.json")
 
 
 _settings: Settings | None = None

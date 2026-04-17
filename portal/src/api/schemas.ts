@@ -160,3 +160,153 @@ export const queueJobResponseSchema = z.object({
   state: z.string(),
 });
 export type QueueJobResponse = z.infer<typeof queueJobResponseSchema>;
+
+export const setupStatusSchema = z.object({
+  profile_json_exists: z.boolean(),
+  profile_json_path: z.string(),
+  raw_profile_exists: z.boolean(),
+  raw_profile_path: z.string(),
+  target_profile_exists: z.boolean(),
+  target_profile_path: z.string(),
+  latest_uploaded_filename: z.string(),
+  chrome_profile_exists: z.boolean(),
+  chrome_has_cookies: z.boolean(),
+  chrome_profile_dir: z.string(),
+  providers: z.array(z.string()),
+});
+export type SetupStatus = z.infer<typeof setupStatusSchema>;
+
+export const canonicalEvidenceItemSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  role_title: z.string().nullable().optional(),
+  skills: z.array(z.string()).default([]),
+  domain: z.array(z.string()).default([]),
+  situation: z.string().default(""),
+  task: z.string().default(""),
+  action: z.string().default(""),
+  outcome: z.string().default(""),
+  metrics: z.array(z.string()).default([]),
+  proof_points: z.array(z.string()).default([]),
+  tone_sample: z.string().nullable().optional(),
+  confidence: z.string().default("draft"),
+});
+export type CanonicalEvidenceItem = z.infer<typeof canonicalEvidenceItemSchema>;
+
+export const canonicalProfileSchema = z.object({
+  name: z.string().default(""),
+  headline: z.string().default(""),
+  summary: z.string().default(""),
+  location: z.string().nullable().optional(),
+  work_rights: z.string().nullable().optional(),
+  salary_expectation: z.string().nullable().optional(),
+  core_strengths: z.array(z.string()).default([]),
+  voice_samples: z.array(z.string()).default([]),
+  evidence_items: z.array(canonicalEvidenceItemSchema).default([]),
+});
+export type CanonicalProfile = z.infer<typeof canonicalProfileSchema>;
+
+export const profileEnrichmentQuestionSchema = z.object({
+  id: z.string(),
+  evidence_item_id: z.string().nullable().optional(),
+  target_field: z.string(),
+  prompt: z.string(),
+  help_text: z.string().default(""),
+  priority: z.string().default("medium"),
+  input_type: z.string().default("text"),
+  current_value: z.string().nullable().optional(),
+});
+export type ProfileEnrichmentQuestion = z.infer<typeof profileEnrichmentQuestionSchema>;
+
+export const profileAnswerSchema = z.object({
+  question_id: z.string().nullable().optional(),
+  target_field: z.string(),
+  value: z.string().default(""),
+});
+export type ProfileAnswer = z.infer<typeof profileAnswerSchema>;
+
+export const profileTargetResponseSchema = z.object({
+  profile_exists: z.boolean(),
+  source_profile_path: z.string(),
+  target_profile_path: z.string(),
+  target_profile_exists: z.boolean(),
+  target_profile: canonicalProfileSchema.nullable().optional(),
+  questions: z.array(profileEnrichmentQuestionSchema).default([]),
+});
+export type ProfileTargetResponse = z.infer<typeof profileTargetResponseSchema>;
+
+export const sourceDocumentSchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  mime_type: z.string(),
+  saved_path: z.string(),
+  sha256: z.string(),
+  extracted_text_path: z.string().nullable().optional(),
+  extracted_markdown_path: z.string().nullable().optional(),
+  parse_status: z.string(),
+  parse_error: z.string().nullable().optional(),
+});
+export type SourceDocument = z.infer<typeof sourceDocumentSchema>;
+
+export const rawProfileBulletSchema = z.object({
+  text: z.string(),
+  source_excerpt: z.string().default(""),
+  confidence: z.string().default("medium"),
+});
+export type RawProfileBullet = z.infer<typeof rawProfileBulletSchema>;
+
+export const rawProfileExperienceSchema = z.object({
+  id: z.string(),
+  title: z.string().default(""),
+  company: z.string().default(""),
+  period_raw: z.string().default(""),
+  bullets: z.array(rawProfileBulletSchema).default([]),
+  metrics: z.array(z.string()).default([]),
+  technologies: z.array(z.string()).default([]),
+});
+export type RawProfileExperience = z.infer<typeof rawProfileExperienceSchema>;
+
+export const rawProfileProjectSchema = z.object({
+  id: z.string(),
+  name: z.string().default(""),
+  summary: z.string().default(""),
+  bullets: z.array(rawProfileBulletSchema).default([]),
+  technologies: z.array(z.string()).default([]),
+});
+export type RawProfileProject = z.infer<typeof rawProfileProjectSchema>;
+
+export const rawProfileSchema = z.object({
+  version: z.number().default(1),
+  source_documents: z.array(sourceDocumentSchema).default([]),
+  identity: z.object({
+    name: z.string().default(""),
+    headline: z.string().default(""),
+    email: z.string().default(""),
+    phone: z.string().default(""),
+    location: z.string().default(""),
+  }).default({ name: "", headline: "", email: "", phone: "", location: "" }),
+  summary: z.string().default(""),
+  experience: z.array(rawProfileExperienceSchema).default([]),
+  projects: z.array(rawProfileProjectSchema).default([]),
+  skills: z.array(z.string()).default([]),
+  education: z.array(z.string()).default([]),
+  certifications: z.array(z.string()).default([]),
+  writing_samples: z.array(z.string()).default([]),
+  parse_notes: z.array(z.string()).default([]),
+});
+export type RawProfile = z.infer<typeof rawProfileSchema>;
+
+export const rawProfileResponseSchema = z.object({
+  raw_profile_exists: z.boolean(),
+  raw_profile_path: z.string(),
+  raw_profile: rawProfileSchema.nullable().optional(),
+});
+export type RawProfileResponse = z.infer<typeof rawProfileResponseSchema>;
+
+export const profileUploadResponseSchema = z.object({
+  ok: z.boolean(),
+  source_document: sourceDocumentSchema,
+  raw_profile_path: z.string(),
+  raw_profile: rawProfileSchema,
+});
+export type ProfileUploadResponse = z.infer<typeof profileUploadResponseSchema>;
