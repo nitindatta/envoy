@@ -255,6 +255,8 @@ export const profileInterviewPromptSchema = z.object({
   suggested_answer: z.string().default(""),
   source_basis: z.array(z.string()).default([]),
   improvement_hint: z.string().default(""),
+  mode: z.string().default("question"),
+  assistant_message: z.string().default(""),
 });
 export type ProfileInterviewPrompt = z.infer<typeof profileInterviewPromptSchema>;
 
@@ -285,7 +287,10 @@ export const profileInterviewSessionResponseSchema = z.object({
     suggested_answer: "",
     source_basis: [],
     improvement_hint: "",
+    mode: "question",
+    assistant_message: "",
   }),
+  pending_item: canonicalEvidenceItemSchema.nullable().optional(),
   last_answer_assessment: profileInterviewAnswerAssessmentSchema.default({
     score: 0,
     dimension_scores: {},

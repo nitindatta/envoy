@@ -84,6 +84,38 @@ async function answerProfileInterview(
   return profileInterviewSessionResponseSchema.parse(raw);
 }
 
+async function clarifyProfileInterview(sessionId: string): Promise<ProfileInterviewSessionResponse> {
+  const raw = await apiFetch<unknown>(`/profile-interview/${sessionId}/clarify`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return profileInterviewSessionResponseSchema.parse(raw);
+}
+
+async function exampleProfileInterview(sessionId: string): Promise<ProfileInterviewSessionResponse> {
+  const raw = await apiFetch<unknown>(`/profile-interview/${sessionId}/example`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return profileInterviewSessionResponseSchema.parse(raw);
+}
+
+async function rephraseProfileInterview(sessionId: string): Promise<ProfileInterviewSessionResponse> {
+  const raw = await apiFetch<unknown>(`/profile-interview/${sessionId}/rephrase`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return profileInterviewSessionResponseSchema.parse(raw);
+}
+
+async function confirmProfileInterview(sessionId: string): Promise<ProfileInterviewSessionResponse> {
+  const raw = await apiFetch<unknown>(`/profile-interview/${sessionId}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return profileInterviewSessionResponseSchema.parse(raw);
+}
+
 async function approveProfileInterview(sessionId: string): Promise<ProfileInterviewSessionResponse> {
   const raw = await apiFetch<unknown>(`/profile-interview/${sessionId}/approve`, {
     method: "POST",
@@ -399,6 +431,38 @@ export default function SetupPage() {
     },
   });
 
+  const clarifyInterviewMutation = useMutation({
+    mutationFn: clarifyProfileInterview,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["profile-interview-active"], data);
+    },
+  });
+
+  const exampleInterviewMutation = useMutation({
+    mutationFn: exampleProfileInterview,
+    onSuccess: (data) => {
+      setInterviewAnswer(data.current_prompt.suggested_answer ?? "");
+      queryClient.setQueryData(["profile-interview-active"], data);
+    },
+  });
+
+  const rephraseInterviewMutation = useMutation({
+    mutationFn: rephraseProfileInterview,
+    onSuccess: (data) => {
+      setInterviewAnswer(data.current_prompt.suggested_answer ?? "");
+      queryClient.setQueryData(["profile-interview-active"], data);
+    },
+  });
+
+  const confirmInterviewMutation = useMutation({
+    mutationFn: confirmProfileInterview,
+    onSuccess: async (data) => {
+      setInterviewAnswer("");
+      queryClient.setQueryData(["profile-interview-active"], data);
+      await queryClient.invalidateQueries({ queryKey: ["setup-profile-target"] });
+    },
+  });
+
   const approveInterviewMutation = useMutation({
     mutationFn: approveProfileInterview,
     onSuccess: async (data) => {
@@ -612,6 +676,38 @@ export default function SetupPage() {
       sessionId: activeInterview.session_id,
       answer: interviewAnswer,
     });
+  };
+
+  const handleClarifyInterview = async () => {
+    if (!activeInterview) {
+      return;
+    }
+    await persistEditsIfNeeded();
+    await clarifyInterviewMutation.mutateAsync(activeInterview.session_id);
+  };
+
+  const handleExampleInterview = async () => {
+    if (!activeInterview) {
+      return;
+    }
+    await persistEditsIfNeeded();
+    await exampleInterviewMutation.mutateAsync(activeInterview.session_id);
+  };
+
+  const handleRephraseInterview = async () => {
+    if (!activeInterview) {
+      return;
+    }
+    await persistEditsIfNeeded();
+    await rephraseInterviewMutation.mutateAsync(activeInterview.session_id);
+  };
+
+  const handleConfirmInterview = async () => {
+    if (!activeInterview) {
+      return;
+    }
+    await persistEditsIfNeeded();
+    await confirmInterviewMutation.mutateAsync(activeInterview.session_id);
   };
 
   const handleApproveInterview = async () => {
@@ -1083,6 +1179,11 @@ export default function SetupPage() {
                             <p className="text-sm font-medium text-sky-900">
                               {activeInterview.current_prompt.question || activeInterview.current_question}
                             </p>
+                            {activeInterview.current_prompt.assistant_message && (
+                              <div className="mt-3 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                                {activeInterview.current_prompt.assistant_message}
+                              </div>
+                            )}
                             {activeInterview.current_prompt.source_basis.length > 0 && (
                               <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
                                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -1141,6 +1242,27 @@ export default function SetupPage() {
                                 {answerInterviewMutation.isPending ? "Saving answer…" : "Use this answer"}
                               </button>
                               <button
+                                onClick={() => void handleClarifyInterview()}
+                                disabled={clarifyInterviewMutation.isPending}
+                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {clarifyInterviewMutation.isPending ? "Clarifying…" : "Clarify"}
+                              </button>
+                              <button
+                                onClick={() => void handleExampleInterview()}
+                                disabled={exampleInterviewMutation.isPending}
+                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {exampleInterviewMutation.isPending ? "Loading…" : "Show example"}
+                              </button>
+                              <button
+                                onClick={() => void handleRephraseInterview()}
+                                disabled={rephraseInterviewMutation.isPending}
+                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {rephraseInterviewMutation.isPending ? "Rephrasing…" : "Ask differently"}
+                              </button>
+                              <button
                                 onClick={() => void handleDeferInterview()}
                                 disabled={deferInterviewMutation.isPending}
                                 className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -1157,6 +1279,45 @@ export default function SetupPage() {
                               <span className="text-xs text-sky-700">
                                 Edit the draft however you like. Envoy will rewrite the evidence item and then ask the next best follow-up.
                               </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {activeInterview.status === "awaiting_confirmation" && (
+                          <div className="rounded border border-sky-200 bg-white p-3">
+                            <p className="text-sm font-medium text-sky-900">
+                              {activeInterview.current_prompt.question || "Does that capture what you meant?"}
+                            </p>
+                            {activeInterview.current_prompt.assistant_message && (
+                              <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950">
+                                {activeInterview.current_prompt.assistant_message}
+                              </div>
+                            )}
+                            <p className="mt-3 text-xs text-sky-700">
+                              The STAR fields above are editable. Tweak them if needed, then confirm to save this turn and continue.
+                            </p>
+                            <div className="mt-3 flex items-center gap-3">
+                              <button
+                                onClick={() => void handleConfirmInterview()}
+                                disabled={confirmInterviewMutation.isPending}
+                                className="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                              >
+                                {confirmInterviewMutation.isPending ? "Confirming…" : "Confirm and continue"}
+                              </button>
+                              <button
+                                onClick={() => void handleRephraseInterview()}
+                                disabled={rephraseInterviewMutation.isPending}
+                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {rephraseInterviewMutation.isPending ? "Rephrasing…" : "Ask differently"}
+                              </button>
+                              <button
+                                onClick={() => void handleCompleteInterview()}
+                                disabled={completeInterviewMutation.isPending}
+                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {completeInterviewMutation.isPending ? "Ending…" : "End interview"}
+                              </button>
                             </div>
                           </div>
                         )}
@@ -1210,6 +1371,26 @@ export default function SetupPage() {
                     {answerInterviewMutation.isError && (
                       <p className="text-sm text-red-600">
                         {(answerInterviewMutation.error as Error).message}
+                      </p>
+                    )}
+                    {clarifyInterviewMutation.isError && (
+                      <p className="text-sm text-red-600">
+                        {(clarifyInterviewMutation.error as Error).message}
+                      </p>
+                    )}
+                    {exampleInterviewMutation.isError && (
+                      <p className="text-sm text-red-600">
+                        {(exampleInterviewMutation.error as Error).message}
+                      </p>
+                    )}
+                    {rephraseInterviewMutation.isError && (
+                      <p className="text-sm text-red-600">
+                        {(rephraseInterviewMutation.error as Error).message}
+                      </p>
+                    )}
+                    {confirmInterviewMutation.isError && (
+                      <p className="text-sm text-red-600">
+                        {(confirmInterviewMutation.error as Error).message}
                       </p>
                     )}
                     {approveInterviewMutation.isError && (

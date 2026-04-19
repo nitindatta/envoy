@@ -20,11 +20,17 @@ from app.services.profile_ingest import (
 from app.services.profile_target import (
     apply_profile_answers,
     build_canonical_profile,
-    build_canonical_profile_from_raw_profile,
     build_profile_enrichment_questions,
+)
+from app.services.profile_store import (
+    apply_canonical_profile_to_interview_state,
+    current_source_profile_path,
+    load_or_build_target_profile,
+    mirror_target_profile,
 )
 from app.settings import Settings
 from app.state.canonical_profile import CanonicalProfile, ProfileAnswer, ProfileTargetResponse
+from app.state.profile_state import ProfileStateSnapshot
 from app.state.raw_profile import ProfileUploadResponse, RawProfileResponse, SourceDocument
 
 router = APIRouter()
@@ -158,21 +164,20 @@ async def get_raw_profile(request: Request) -> RawProfileResponse:
 async def get_target_profile(request: Request) -> ProfileTargetResponse:
     """Return the canonical target profile draft plus focused enrichment questions."""
     settings = request.app.state.settings
-    target_path = settings.resolved_target_profile_path
     target_profile, profile_exists, source_profile_path = await _load_target_profile_for_setup(request)
     if not profile_exists or target_profile is None:
         return ProfileTargetResponse(
             profile_exists=False,
             source_profile_path=str(settings.resolved_raw_profile_path),
-            target_profile_path=str(target_path),
-            target_profile_exists=target_path.exists(),
+            target_profile_path=str(settings.resolved_target_profile_path),
+            target_profile_exists=settings.resolved_target_profile_path.exists(),
         )
 
     return ProfileTargetResponse(
         profile_exists=True,
         source_profile_path=source_profile_path,
-        target_profile_path=str(target_path),
-        target_profile_exists=target_path.exists(),
+        target_profile_path=str(settings.resolved_target_profile_path),
+        target_profile_exists=settings.resolved_target_profile_path.exists(),
         target_profile=target_profile,
         questions=build_profile_enrichment_questions(target_profile),
     )
@@ -189,14 +194,16 @@ class SaveProfileAnswersRequest(BaseModel):
 @router.post("/api/setup/profile/target", response_model=dict)
 async def save_target_profile(body: SaveTargetProfileRequest, request: Request) -> dict[str, object]:
     """Persist the canonical target profile beside the source profile JSON."""
-    target_path = request.app.state.settings.resolved_target_profile_path
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(
-        body.target_profile.model_dump_json(indent=2),
-        encoding="utf-8",
+    settings = request.app.state.settings
+    snapshot = ProfileStateSnapshot(
+        source_profile_path=current_source_profile_path(settings),
+        target_profile_path=str(settings.resolved_target_profile_path),
+        canonical_profile=body.target_profile,
     )
+    await request.app.state.profile_state_repository.save(snapshot)
+    mirror_target_profile(settings.resolved_target_profile_path, body.target_profile)
     await _sync_active_interview_profile(request, body.target_profile)
-    return {"ok": True, "target_profile_path": str(target_path)}
+    return {"ok": True, "target_profile_path": str(settings.resolved_target_profile_path)}
 
 
 @router.post("/api/setup/profile/target/answers", response_model=ProfileTargetResponse)
@@ -205,7 +212,8 @@ async def save_target_profile_answers(
     request: Request,
 ) -> ProfileTargetResponse:
     settings = request.app.state.settings
-    target_profile, profile_exists = _load_or_build_target_profile(settings)
+    target_profile = await _load_or_build_target_profile_from_store(request)
+    profile_exists = target_profile is not None
     if not profile_exists or target_profile is None:
         raise HTTPException(status_code=404, detail="no source profile is available yet")
 
@@ -218,19 +226,19 @@ async def save_target_profile_answers(
         encoding="utf-8",
     )
 
-    target_path = settings.resolved_target_profile_path
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(updated_profile.model_dump_json(indent=2), encoding="utf-8")
+    snapshot = ProfileStateSnapshot(
+        source_profile_path=current_source_profile_path(settings),
+        target_profile_path=str(settings.resolved_target_profile_path),
+        canonical_profile=updated_profile,
+    )
+    await request.app.state.profile_state_repository.save(snapshot)
+    mirror_target_profile(settings.resolved_target_profile_path, updated_profile)
     await _sync_active_interview_profile(request, updated_profile)
 
     return ProfileTargetResponse(
         profile_exists=True,
-        source_profile_path=str(
-            settings.resolved_raw_profile_path
-            if settings.resolved_raw_profile_path.exists()
-            else settings.resolved_profile_path
-        ),
-        target_profile_path=str(target_path),
+        source_profile_path=current_source_profile_path(settings),
+        target_profile_path=str(settings.resolved_target_profile_path),
         target_profile_exists=True,
         target_profile=updated_profile,
         questions=build_profile_enrichment_questions(updated_profile),
@@ -258,47 +266,45 @@ def _legacy_source_document(path: Path) -> SourceDocument:
     )
 
 
-def _load_or_build_target_profile(settings: Settings) -> tuple[CanonicalProfile | None, bool]:
-    source_path = settings.resolved_profile_path
-    target_path = settings.resolved_target_profile_path
-    raw_profile = load_raw_profile(settings)
-
-    if raw_profile is None and not source_path.exists():
-        return None, False
-
-    if target_path.exists():
-        return (
-            CanonicalProfile.model_validate_json(target_path.read_text(encoding="utf-8")),
-            True,
-        )
-
-    if raw_profile is not None:
-        return build_canonical_profile_from_raw_profile(raw_profile), True
-
-    legacy_profile = json.loads(source_path.read_text(encoding="utf-8"))
-    return build_canonical_profile(legacy_profile), True
+async def _load_or_build_target_profile_from_store(request: Request) -> CanonicalProfile | None:
+    snapshot = await request.app.state.profile_state_repository.get()
+    if snapshot is not None:
+        return snapshot.canonical_profile
+    return load_or_build_target_profile(request.app.state.settings)
 
 
 async def _load_target_profile_for_setup(
     request: Request,
 ) -> tuple[CanonicalProfile | None, bool, str]:
     settings = request.app.state.settings
+    snapshot = await request.app.state.profile_state_repository.get()
     repo = request.app.state.profile_interview_repository
     active = await repo.get_active()
     if active is not None:
-        return (
-            active.canonical_profile,
-            True,
-            active.source_profile_path,
-        )
+        refreshed = active.model_copy(deep=True)
+        profile = snapshot.canonical_profile if snapshot is not None else load_or_build_target_profile(settings)
+        if profile is not None:
+            changed = apply_canonical_profile_to_interview_state(
+                refreshed,
+                canonical_profile=profile,
+                source_profile_path=(
+                    snapshot.source_profile_path if snapshot is not None else current_source_profile_path(settings)
+                ),
+                target_profile_path=(
+                    snapshot.target_profile_path
+                    if snapshot is not None
+                    else str(settings.resolved_target_profile_path)
+                ),
+            )
+            if changed:
+                await repo.save_state(refreshed)
+            return refreshed.canonical_profile, True, refreshed.source_profile_path
 
-    target_profile, profile_exists = _load_or_build_target_profile(settings)
-    source_profile_path = str(
-        settings.resolved_raw_profile_path
-        if settings.resolved_raw_profile_path.exists()
-        else settings.resolved_profile_path
-    )
-    return target_profile, profile_exists, source_profile_path
+    if snapshot is not None:
+        return snapshot.canonical_profile, True, snapshot.source_profile_path
+
+    target_profile = load_or_build_target_profile(settings)
+    return target_profile, target_profile is not None, current_source_profile_path(settings)
 
 
 async def _sync_active_interview_profile(request: Request, profile: CanonicalProfile) -> None:
@@ -308,15 +314,11 @@ async def _sync_active_interview_profile(request: Request, profile: CanonicalPro
         return
 
     updated = active.model_copy(deep=True)
-    updated.canonical_profile = profile.model_copy(deep=True)
-    active_item_id = updated.selected_item_id or updated.current_item_id
-    if active_item_id:
-        updated.draft_item = next(
-            (
-                item.model_copy(deep=True)
-                for item in updated.canonical_profile.evidence_items
-                if item.id == active_item_id
-            ),
-            None,
-        )
-    await repo.save_state(updated)
+    changed = apply_canonical_profile_to_interview_state(
+        updated,
+        canonical_profile=profile,
+        source_profile_path=current_source_profile_path(request.app.state.settings),
+        target_profile_path=str(request.app.state.settings.resolved_target_profile_path),
+    )
+    if changed:
+        await repo.save_state(updated)

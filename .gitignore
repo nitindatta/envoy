@@ -58,3 +58,4 @@ automation/browser-profile/
 logs/
 # Personal profile data — keep local only
 profile/
+test-output

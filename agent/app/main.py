@@ -84,6 +84,7 @@ from app.persistence.sqlite.connection import Database
 from app.persistence.sqlite.job_analysis import SqliteJobAnalysisRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.persistence.sqlite.profile_interview import SqliteProfileInterviewRepository
+from app.persistence.sqlite.profile_state import SqliteProfileStateRepository
 from app.persistence.sqlite.question_cache import SqliteQuestionCacheRepository
 from app.persistence.sqlite.queue import SqliteQueueRepository
 from app.persistence.sqlite.workflow_runs import (
@@ -109,6 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.queue_repository = SqliteQueueRepository(database.connection)
     app.state.question_cache_repository = SqliteQuestionCacheRepository(database.connection)
     app.state.profile_interview_repository = SqliteProfileInterviewRepository(database.connection)
+    app.state.profile_state_repository = SqliteProfileStateRepository(database.connection)
     app.state.tool_client = ToolClient(settings)
 
     await app.state.queue_repository.reset_stale()

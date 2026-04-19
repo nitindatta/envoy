@@ -230,6 +230,10 @@ async def run_prepare(
 
 
 def _load_profile(settings: Settings) -> dict:
+    target_path = settings.resolved_target_profile_path
+    if target_path.exists():
+        return json.loads(target_path.read_text(encoding="utf-8"))
+
     path = settings.resolved_profile_path
     if not path.exists():
         return {}

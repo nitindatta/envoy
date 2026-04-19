@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import shutil
 import uuid
@@ -6,6 +7,8 @@ import uuid
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("INTERNAL_AUTH_SECRET", "test-secret")
 
 from app.main import create_app
 from app.settings import Settings
@@ -81,8 +84,15 @@ async def test_answer_persists_updated_canonical_profile(client: TestClient) -> 
         json={"answer": "I usually start by getting close to the operational pain point, then I keep the design practical enough to ship."},
     )
     assert answer.status_code == 200
+    assert answer.json()["status"] == "awaiting_confirmation"
 
-    target_path = Path(answer.json()["target_profile_path"])
+    confirm = client.post(
+        f"/api/profile-interview/{session['session_id']}/confirm",
+        json={},
+    )
+    assert confirm.status_code == 200
+
+    target_path = Path(confirm.json()["target_profile_path"])
     saved = json.loads(target_path.read_text(encoding="utf-8"))
 
     assert saved["voice_samples"][-1] == (
@@ -113,8 +123,15 @@ async def test_setup_target_prefers_active_interview_state_over_stale_file(clien
         json={"answer": "The department needed a scalable way to master student records."},
     )
     assert answer.status_code == 200
+    assert answer.json()["status"] == "awaiting_confirmation"
 
-    target_path = Path(answer.json()["target_profile_path"])
+    confirm = client.post(
+        f"/api/profile-interview/{session['session_id']}/confirm",
+        json={},
+    )
+    assert confirm.status_code == 200
+
+    target_path = Path(confirm.json()["target_profile_path"])
     stale = json.loads(target_path.read_text(encoding="utf-8"))
     stale["evidence_items"][0]["situation"] = ""
     target_path.write_text(json.dumps(stale, indent=2), encoding="utf-8")

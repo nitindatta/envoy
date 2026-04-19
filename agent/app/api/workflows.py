@@ -81,7 +81,12 @@ async def generate_questions(request: Request, body: QuestionsRequest) -> Questi
         raise HTTPException(status_code=404, detail="job not found")
 
     settings = request.app.state.settings
-    profile = json.loads((settings.resolved_profile_path).read_text(encoding="utf-8"))
+    profile_path = (
+        settings.resolved_target_profile_path
+        if settings.resolved_target_profile_path.exists()
+        else settings.resolved_profile_path
+    )
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
     from app.tools.seek_detail import fetch_job_detail
     provider_job_id = str(job.payload.get("provider_job_id", ""))

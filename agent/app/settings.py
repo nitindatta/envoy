@@ -51,6 +51,29 @@ class Settings(BaseSettings):
     profile_answers_path: Path = Field(default=Path("profile/profile_answers.json"))
     profile_upload_dir: Path = Field(default=Path("automation/profile_uploads"))
 
+    def _discover_profile_path(self, configured_path: Path) -> Path | None:
+        directory = configured_path.parent
+        if not directory.exists():
+            return None
+
+        candidates: list[Path] = []
+        for candidate in directory.glob("*.json"):
+            name = candidate.name.lower()
+            if name in {"raw_profile.json", "profile_answers.json"}:
+                continue
+            if name.endswith(".canonical.json"):
+                continue
+            candidates.append(candidate.resolve())
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        preferred = [candidate for candidate in candidates if candidate.stem.endswith("_profile")]
+        if len(preferred) == 1:
+            return preferred[0]
+
+        return None
+
     @property
     def resolved_sqlite_path(self) -> Path:
         if str(self.sqlite_path) == ":memory:":
@@ -61,9 +84,15 @@ class Settings(BaseSettings):
 
     @property
     def resolved_profile_path(self) -> Path:
-        if self.profile_path.is_absolute():
-            return self.profile_path
-        return (self.repo_root / self.profile_path).resolve()
+        configured = (
+            self.profile_path
+            if self.profile_path.is_absolute()
+            else (self.repo_root / self.profile_path).resolve()
+        )
+        if configured.exists():
+            return configured
+        discovered = self._discover_profile_path(configured)
+        return discovered or configured
 
     @property
     def resolved_raw_profile_path(self) -> Path:

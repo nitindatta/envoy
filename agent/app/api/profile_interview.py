@@ -4,26 +4,32 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.services.profile_ingest import load_raw_profile
-from app.services.profile_target import (
-    build_canonical_profile,
-    build_canonical_profile_from_raw_profile,
+from app.services.profile_store import (
+    apply_canonical_profile_to_interview_state,
+    current_source_profile_path,
+    load_or_build_target_profile,
+    mirror_target_profile,
 )
-from app.state.canonical_profile import CanonicalProfile
 from app.state.profile_interview import (
     AnswerProfileInterviewRequest,
     ApproveProfileInterviewRequest,
+    ClarifyProfileInterviewRequest,
     CompleteProfileInterviewRequest,
+    ConfirmProfileInterviewRequest,
     DeferProfileInterviewRequest,
+    ExampleProfileInterviewRequest,
     ProfileInterviewPrompt,
     ProfileInterviewSessionResponse,
     ProfileInterviewState,
+    RephraseProfileInterviewRequest,
     SelectProfileInterviewRequest,
     StartProfileInterviewRequest,
 )
+from app.state.profile_state import ProfileStateSnapshot
 from app.workflows.profile_interview import run_profile_interview
 
 router = APIRouter()
@@ -31,9 +37,14 @@ router = APIRouter()
 
 @router.get("/api/profile-interview/active", response_model=ProfileInterviewSessionResponse | None)
 async def get_active_profile_interview(request: Request) -> ProfileInterviewSessionResponse | None:
-    state = await request.app.state.profile_interview_repository.get_active()
+    repo = request.app.state.profile_interview_repository
+    state = await repo.get_active()
     if state is None:
         return None
+    refreshed = await _refresh_state_from_store(request, state.model_copy(deep=True))
+    if refreshed.model_dump(mode="json") != state.model_dump(mode="json"):
+        await repo.save_state(refreshed)
+    state = refreshed
     return _response_from_state(state)
 
 
@@ -45,22 +56,39 @@ async def start_profile_interview(
     repo = request.app.state.profile_interview_repository
     existing = await repo.get_active()
     if existing is not None:
-        return _response_from_state(existing)
+        refreshed = await _refresh_state_from_store(request, existing.model_copy(deep=True))
+        if refreshed.model_dump(mode="json") != existing.model_dump(mode="json"):
+            await repo.save_state(refreshed)
+        return _response_from_state(refreshed)
 
     settings = request.app.state.settings
-    canonical_profile = _load_or_build_target_profile(settings)
+    snapshot = await request.app.state.profile_state_repository.get()
+    canonical_profile = (
+        snapshot.canonical_profile if snapshot is not None else load_or_build_target_profile(settings)
+    )
     if canonical_profile is None:
         raise HTTPException(status_code=404, detail="no source profile is available yet")
 
-    source_profile_path = str(
-        settings.resolved_raw_profile_path
-        if settings.resolved_raw_profile_path.exists()
-        else settings.resolved_profile_path
+    source_profile_path = (
+        snapshot.source_profile_path if snapshot is not None else current_source_profile_path(settings)
     )
+    target_profile_path = (
+        snapshot.target_profile_path
+        if snapshot is not None
+        else str(settings.resolved_target_profile_path)
+    )
+    if snapshot is None:
+        await request.app.state.profile_state_repository.save(
+            ProfileStateSnapshot(
+                source_profile_path=source_profile_path,
+                target_profile_path=target_profile_path,
+                canonical_profile=canonical_profile,
+            )
+        )
     state = ProfileInterviewState(
         session_id=str(uuid.uuid4()),
         source_profile_path=source_profile_path,
-        target_profile_path=str(settings.resolved_target_profile_path),
+        target_profile_path=target_profile_path,
         canonical_profile=canonical_profile,
         action="select" if body.item_id else "start",
         selected_item_id=body.item_id or "",
@@ -83,7 +111,7 @@ async def select_profile_interview_item(
         raise HTTPException(status_code=404, detail="profile interview session not found")
 
     state = existing.model_copy(deep=True)
-    _refresh_state_from_target_profile(request.app.state.settings, state)
+    state = await _refresh_state_from_store(request, state)
     state.action = "select"
     state.selected_item_id = body.item_id
     state.error = None
@@ -106,7 +134,7 @@ async def answer_profile_interview(
         raise HTTPException(status_code=404, detail="profile interview session not found")
 
     state = existing.model_copy(deep=True)
-    _refresh_state_from_target_profile(request.app.state.settings, state)
+    state = await _refresh_state_from_store(request, state)
     state.action = "answer"
     state.user_answer = body.answer
     state.error = None
@@ -120,7 +148,93 @@ async def answer_profile_interview(
         user_answer=body.answer,
         interpreted_answer=updated.last_interpretation,
     )
-    _persist_target_profile(request.app.state.settings, updated.canonical_profile)
+    await repo.save_state(updated)
+    await _persist_draft_snapshot(repo, updated)
+    return _response_from_state(updated)
+
+
+@router.post("/api/profile-interview/{session_id}/clarify", response_model=ProfileInterviewSessionResponse)
+async def clarify_profile_interview_question(
+    session_id: str,
+    request: Request,
+    body: ClarifyProfileInterviewRequest,
+) -> ProfileInterviewSessionResponse:
+    del body
+    repo = request.app.state.profile_interview_repository
+    existing = await repo.get(session_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="profile interview session not found")
+
+    state = existing.model_copy(deep=True)
+    state = await _refresh_state_from_store(request, state)
+    state.action = "clarify"
+    state.error = None
+    updated = await run_profile_interview(request.app.state.settings, state)
+    await repo.save_state(updated)
+    return _response_from_state(updated)
+
+
+@router.post("/api/profile-interview/{session_id}/example", response_model=ProfileInterviewSessionResponse)
+async def example_profile_interview_question(
+    session_id: str,
+    request: Request,
+    body: ExampleProfileInterviewRequest,
+) -> ProfileInterviewSessionResponse:
+    del body
+    repo = request.app.state.profile_interview_repository
+    existing = await repo.get(session_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="profile interview session not found")
+
+    state = existing.model_copy(deep=True)
+    state = await _refresh_state_from_store(request, state)
+    state.action = "example"
+    state.error = None
+    updated = await run_profile_interview(request.app.state.settings, state)
+    await repo.save_state(updated)
+    return _response_from_state(updated)
+
+
+@router.post("/api/profile-interview/{session_id}/rephrase", response_model=ProfileInterviewSessionResponse)
+async def rephrase_profile_interview_question_route(
+    session_id: str,
+    request: Request,
+    body: RephraseProfileInterviewRequest,
+) -> ProfileInterviewSessionResponse:
+    del body
+    repo = request.app.state.profile_interview_repository
+    existing = await repo.get(session_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="profile interview session not found")
+
+    state = existing.model_copy(deep=True)
+    state = await _refresh_state_from_store(request, state)
+    state.action = "rephrase"
+    state.error = None
+    updated = await run_profile_interview(request.app.state.settings, state)
+    await repo.save_state(updated)
+    return _response_from_state(updated)
+
+
+@router.post("/api/profile-interview/{session_id}/confirm", response_model=ProfileInterviewSessionResponse)
+async def confirm_profile_interview_answer(
+    session_id: str,
+    request: Request,
+    body: ConfirmProfileInterviewRequest,
+) -> ProfileInterviewSessionResponse:
+    del body
+    repo = request.app.state.profile_interview_repository
+    existing = await repo.get(session_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="profile interview session not found")
+
+    state = existing.model_copy(deep=True)
+    state = await _refresh_state_from_store(request, state)
+    state.action = "confirm"
+    state.error = None
+    updated = await run_profile_interview(request.app.state.settings, state)
+
+    await _save_profile_state_snapshot(request, updated)
     await repo.save_state(updated)
     await _persist_draft_snapshot(repo, updated)
     return _response_from_state(updated)
@@ -139,12 +253,12 @@ async def approve_profile_interview_item(
         raise HTTPException(status_code=404, detail="profile interview session not found")
 
     state = existing.model_copy(deep=True)
-    _refresh_state_from_target_profile(request.app.state.settings, state)
+    state = await _refresh_state_from_store(request, state)
     state.action = "approve"
     state.error = None
     updated = await run_profile_interview(request.app.state.settings, state)
 
-    _persist_target_profile(request.app.state.settings, updated.canonical_profile)
+    await _save_profile_state_snapshot(request, updated)
     await repo.save_state(updated)
     await _persist_draft_snapshot(repo, updated)
     return _response_from_state(updated)
@@ -163,12 +277,12 @@ async def defer_profile_interview_item(
         raise HTTPException(status_code=404, detail="profile interview session not found")
 
     state = existing.model_copy(deep=True)
-    _refresh_state_from_target_profile(request.app.state.settings, state)
+    state = await _refresh_state_from_store(request, state)
     state.action = "defer"
     state.error = None
     updated = await run_profile_interview(request.app.state.settings, state)
 
-    _persist_target_profile(request.app.state.settings, updated.canonical_profile)
+    await _save_profile_state_snapshot(request, updated)
     await repo.save_state(updated)
     await _persist_draft_snapshot(repo, updated)
     return _response_from_state(updated)
@@ -187,12 +301,12 @@ async def complete_profile_interview(
         raise HTTPException(status_code=404, detail="profile interview session not found")
 
     state = existing.model_copy(deep=True)
-    _refresh_state_from_target_profile(request.app.state.settings, state)
+    state = await _refresh_state_from_store(request, state)
     state.action = "complete"
     state.error = None
     updated = await run_profile_interview(request.app.state.settings, state)
 
-    _persist_target_profile(request.app.state.settings, updated.canonical_profile)
+    await _save_profile_state_snapshot(request, updated)
     await repo.save_state(updated)
     await _persist_draft_snapshot(repo, updated)
     return _response_from_state(updated)
@@ -214,6 +328,7 @@ def _response_from_state(state: ProfileInterviewState) -> ProfileInterviewSessio
         current_question_id=state.current_question_id,
         current_question=state.current_question,
         current_prompt=state.current_prompt or ProfileInterviewPrompt(),
+        pending_item=state.pending_item,
         last_answer_assessment=state.last_answer_assessment,
         item_quality_scores=state.item_quality_scores,
         completeness_score=state.completeness_score,
@@ -238,40 +353,46 @@ async def _persist_draft_snapshot(repo, state: ProfileInterviewState) -> None:
     )
 
 
-def _load_or_build_target_profile(settings) -> CanonicalProfile | None:
-    source_path = settings.resolved_profile_path
-    target_path = settings.resolved_target_profile_path
-    raw_profile = load_raw_profile(settings)
+async def _load_profile_snapshot_or_build(request: Request) -> ProfileStateSnapshot | None:
+    settings = request.app.state.settings
+    snapshot = await request.app.state.profile_state_repository.get()
+    if snapshot is not None:
+        return snapshot
 
-    if raw_profile is None and not source_path.exists():
+    profile = load_or_build_target_profile(settings)
+    if profile is None:
         return None
 
-    if target_path.exists():
-        return CanonicalProfile.model_validate_json(target_path.read_text(encoding="utf-8"))
-
-    if raw_profile is not None:
-        return build_canonical_profile_from_raw_profile(raw_profile)
-
-    legacy_profile = json.loads(source_path.read_text(encoding="utf-8"))
-    return build_canonical_profile(legacy_profile)
-
-
-def _persist_target_profile(settings, profile: CanonicalProfile) -> None:
-    target_path = settings.resolved_target_profile_path
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(profile.model_dump_json(indent=2), encoding="utf-8")
-
-
-def _refresh_state_from_target_profile(settings, state: ProfileInterviewState) -> None:
-    refreshed = _load_or_build_target_profile(settings)
-    if refreshed is None:
-        return
-    state.canonical_profile = refreshed
-    active_item_id = state.selected_item_id or state.current_item_id
-    if not active_item_id:
-        state.draft_item = None
-        return
-    state.draft_item = next(
-        (item.model_copy(deep=True) for item in refreshed.evidence_items if item.id == active_item_id),
-        None,
+    snapshot = ProfileStateSnapshot(
+        source_profile_path=current_source_profile_path(settings),
+        target_profile_path=str(settings.resolved_target_profile_path),
+        canonical_profile=profile,
     )
+    return snapshot
+
+
+async def _refresh_state_from_store(
+    request: Request,
+    state: ProfileInterviewState,
+) -> ProfileInterviewState:
+    snapshot = await _load_profile_snapshot_or_build(request)
+    if snapshot is None:
+        return state
+
+    apply_canonical_profile_to_interview_state(
+        state,
+        canonical_profile=snapshot.canonical_profile,
+        source_profile_path=snapshot.source_profile_path,
+        target_profile_path=snapshot.target_profile_path,
+    )
+    return state
+
+
+async def _save_profile_state_snapshot(request: Request, state: ProfileInterviewState) -> None:
+    snapshot = ProfileStateSnapshot(
+        source_profile_path=state.source_profile_path,
+        target_profile_path=state.target_profile_path,
+        canonical_profile=state.canonical_profile,
+    )
+    await request.app.state.profile_state_repository.save(snapshot)
+    mirror_target_profile(Path(state.target_profile_path), state.canonical_profile)

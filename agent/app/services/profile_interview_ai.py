@@ -188,6 +188,158 @@ Candidate answer: {answer}
     return _fallback_answer_assessment(current_gap, answer)
 
 
+async def explain_profile_question(
+    settings: Settings,
+    *,
+    item: CanonicalEvidenceItem,
+    current_gap: str,
+    current_question: str,
+    suggested_answer: str,
+) -> dict[str, object]:
+    client = _build_client(settings)
+    system = (
+        "You are a professional resume coach. Explain what your interview question means in plain English. "
+        "Keep it concise, supportive, and practical. Also give one short tip on what kind of detail would help. "
+        "Return ONLY valid JSON with this shape: "
+        "{\"assistant_message\": \"...\", \"improvement_hint\": \"...\"}."
+    )
+    user = f"""Evidence item:
+source: {item.source}
+role_title: {item.role_title or ""}
+current_gap: {current_gap}
+question: {current_question}
+existing suggested answer: {suggested_answer}
+"""
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.2,
+            max_tokens=180,
+        )
+        raw = response.choices[0].message.content or "{}"
+        parsed = json.loads(raw)
+        message = str(parsed.get("assistant_message", "")).strip()
+        if message:
+            return {
+                "assistant_message": message,
+                "improvement_hint": str(parsed.get("improvement_hint", "")).strip(),
+            }
+    except Exception as exc:  # pragma: no cover - network/runtime dependent
+        log.warning("[explain_profile_question] falling back to deterministic explanation: %s", exc)
+    return {
+        "assistant_message": _fallback_explanation_for_gap(item, current_gap),
+        "improvement_hint": _fallback_improvement_hint(current_gap),
+    }
+
+
+async def rephrase_profile_question(
+    settings: Settings,
+    *,
+    item: CanonicalEvidenceItem,
+    current_gap: str,
+    current_question: str,
+    asked_question_ids: list[str],
+) -> dict[str, object]:
+    client = _build_client(settings)
+    system = (
+        "You are a professional resume coach. Rephrase the question so it asks for the same missing STAR detail, "
+        "but in a different, more natural way. Also provide a cautious example answer, short source-basis bullets, "
+        "and one practical hint. Return ONLY valid JSON with this shape: "
+        "{\"question\": \"...\", \"suggested_answer\": \"...\", \"source_basis\": [\"...\"], \"improvement_hint\": \"...\"}."
+    )
+    user = f"""Evidence item:
+source: {item.source}
+role_title: {item.role_title or ""}
+situation: {item.situation}
+task: {item.task}
+action: {item.action}
+outcome: {item.outcome}
+metrics: {item.metrics}
+
+Current gap: {current_gap}
+Current question: {current_question}
+Previously asked question ids: {asked_question_ids}
+"""
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.3,
+            max_tokens=220,
+        )
+        raw = response.choices[0].message.content or ""
+        parsed = json.loads(raw)
+        question = str(parsed.get("question", "")).strip()
+        if question:
+            return {
+                "question": question,
+                "suggested_answer": str(parsed.get("suggested_answer", "")).strip(),
+                "source_basis": _normalize_source_basis(parsed.get("source_basis")),
+                "improvement_hint": str(parsed.get("improvement_hint", "")).strip(),
+            }
+    except Exception as exc:  # pragma: no cover - network/runtime dependent
+        log.warning("[rephrase_profile_question] falling back to deterministic prompt: %s", exc)
+    return {
+        "question": _fallback_rephrase_for_gap(item, current_gap),
+        "suggested_answer": _fallback_suggested_answer(item, current_gap),
+        "source_basis": _fallback_source_basis(item),
+        "improvement_hint": _fallback_improvement_hint(current_gap),
+    }
+
+
+async def reflect_profile_answer(
+    settings: Settings,
+    *,
+    item: CanonicalEvidenceItem,
+    current_gap: str,
+    current_question: str,
+    answer: str,
+    interpretation: dict[str, object],
+) -> dict[str, object]:
+    client = _build_client(settings)
+    system = (
+        "You are a professional resume coach. Reflect back your understanding of the candidate's answer in a short, "
+        "clear way and ask for confirmation. Keep it warm and concrete. Return ONLY valid JSON with this shape: "
+        "{\"assistant_message\": \"...\", \"confirmation_question\": \"...\"}."
+    )
+    user = f"""Evidence item:
+source: {item.source}
+role_title: {item.role_title or ""}
+current_gap: {current_gap}
+current_question: {current_question}
+candidate answer: {answer}
+interpreted field updates: {json.dumps(interpretation.get("field_updates", {}))}
+"""
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.2,
+            max_tokens=180,
+        )
+        raw = response.choices[0].message.content or "{}"
+        parsed = json.loads(raw)
+        message = str(parsed.get("assistant_message", "")).strip()
+        if message:
+            return {
+                "assistant_message": message,
+                "confirmation_question": str(parsed.get("confirmation_question", "")).strip(),
+            }
+    except Exception as exc:  # pragma: no cover - network/runtime dependent
+        log.warning("[reflect_profile_answer] falling back to deterministic reflection: %s", exc)
+    return _fallback_reflection(current_gap, interpretation)
+
+
 def _fallback_question_for_gap(item: CanonicalEvidenceItem, gap: str) -> str:
     prompts = {
         "situation": f"What was the starting problem or context behind your {item.source} work?",
@@ -196,6 +348,26 @@ def _fallback_question_for_gap(item: CanonicalEvidenceItem, gap: str) -> str:
         "metrics": f"Do you have a number, scale, or measurable impact for this {item.source} work?",
     }
     return prompts.get(gap, f"What is the most important missing detail for this {item.source} example?")
+
+
+def _fallback_rephrase_for_gap(item: CanonicalEvidenceItem, gap: str) -> str:
+    prompts = {
+        "situation": f"Before you changed things at {item.source}, what was making the work hard or inefficient?",
+        "task": f"In that {item.source} work, what part did you personally own end to end?",
+        "outcome": f"Once your work landed at {item.source}, what was better for the team or business?",
+        "metrics": f"If you had to put a rough number or scale on the {item.source} impact, what would you mention?",
+    }
+    return prompts.get(gap, f"Can you explain the missing part of this {item.source} example another way?")
+
+
+def _fallback_explanation_for_gap(item: CanonicalEvidenceItem, gap: str) -> str:
+    prompts = {
+        "situation": f"I'm trying to understand the starting problem in your {item.source} example, before your solution was built.",
+        "task": f"I'm asking what you personally owned in {item.source}, so we can separate your contribution from the broader team effort.",
+        "outcome": f"I'm looking for what changed after your work at {item.source}, not just what you built.",
+        "metrics": f"I'm asking whether there was any number, scale, or approximate impact tied to the {item.source} work.",
+    }
+    return prompts.get(gap, f"I'm trying to pin down the missing detail in your {item.source} example.")
 
 
 def _fallback_suggested_answer(item: CanonicalEvidenceItem, gap: str) -> str:
@@ -300,6 +472,26 @@ def _fallback_interpretation(current_gap: str, answer: str) -> dict[str, object]
         "field_updates": {current_gap: cleaned, "metrics": []},
         "approximate": False,
         "notes": "deterministic fallback",
+    }
+
+
+def _fallback_reflection(current_gap: str, interpretation: dict[str, object]) -> dict[str, object]:
+    field_updates = interpretation.get("field_updates", {})
+    summary = ""
+    if isinstance(field_updates, dict):
+        if current_gap == "metrics":
+            metrics = field_updates.get("metrics", [])
+            if isinstance(metrics, list) and metrics:
+                summary = f"I’ve captured the metric as: {metrics[0]}"
+        else:
+            value = field_updates.get(current_gap)
+            if isinstance(value, str) and value.strip():
+                summary = f"I’ve captured the {current_gap} as: {value.strip()}"
+    if not summary:
+        summary = "I’ve updated the draft based on your answer."
+    return {
+        "assistant_message": summary,
+        "confirmation_question": "Does that capture what you meant?",
     }
 
 

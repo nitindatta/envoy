@@ -13,6 +13,8 @@ class ProfileInterviewPrompt(BaseModel):
     suggested_answer: str = ""
     source_basis: list[str] = Field(default_factory=list)
     improvement_hint: str = ""
+    mode: str = "question"
+    assistant_message: str = ""
 
 
 class ProfileInterviewAnswerAssessment(BaseModel):
@@ -30,8 +32,8 @@ class ProfileInterviewState(BaseModel):
     target_profile_path: str
     canonical_profile: CanonicalProfile
 
-    action: str = "start"  # start | select | answer | approve | defer | complete
-    status: str = "idle"  # waiting_for_user | reviewing | completed | error
+    action: str = "start"  # start | select | answer | clarify | example | rephrase | confirm | approve | defer | complete
+    status: str = "idle"  # waiting_for_user | awaiting_confirmation | reviewing | completed | error
 
     current_item_id: str = ""
     selected_item_id: str = ""
@@ -42,6 +44,8 @@ class ProfileInterviewState(BaseModel):
     current_question_id: str = ""
     current_question: str = ""
     current_prompt: ProfileInterviewPrompt = Field(default_factory=ProfileInterviewPrompt)
+    pending_item: CanonicalEvidenceItem | None = None
+    pending_voice_answer: str = ""
 
     user_answer: str = ""
     last_interpretation: dict[str, object] = Field(default_factory=dict)
@@ -71,6 +75,22 @@ class AnswerProfileInterviewRequest(BaseModel):
     answer: str
 
 
+class ClarifyProfileInterviewRequest(BaseModel):
+    pass
+
+
+class ExampleProfileInterviewRequest(BaseModel):
+    pass
+
+
+class RephraseProfileInterviewRequest(BaseModel):
+    pass
+
+
+class ConfirmProfileInterviewRequest(BaseModel):
+    pass
+
+
 class ApproveProfileInterviewRequest(BaseModel):
     pass
 
@@ -95,6 +115,7 @@ class ProfileInterviewSessionResponse(BaseModel):
     current_question_id: str = ""
     current_question: str = ""
     current_prompt: ProfileInterviewPrompt = Field(default_factory=ProfileInterviewPrompt)
+    pending_item: CanonicalEvidenceItem | None = None
     last_answer_assessment: ProfileInterviewAnswerAssessment = Field(
         default_factory=ProfileInterviewAnswerAssessment
     )

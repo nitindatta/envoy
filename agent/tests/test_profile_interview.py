@@ -111,23 +111,92 @@ async def test_profile_interview_answer_advances_to_next_gap() -> None:
 
     assert updated.draft_item is not None
     assert updated.draft_item.situation == "Needed a scalable way to master student records."
-    assert updated.draft_item.tone_sample == "Needed a scalable way to master student records."
+    assert updated.pending_item is not None
+    assert updated.pending_item.situation == "Needed a scalable way to master student records."
     saved = next(item for item in updated.canonical_profile.evidence_items if item.id == "dfe_entity_resolution")
+    assert saved.situation == ""
+    assert updated.canonical_profile.voice_samples == []
+    assert updated.last_answer_assessment.score == 0.8
+    assert updated.status == "awaiting_confirmation"
+    assert updated.current_prompt.mode == "reflection"
+    assert updated.current_prompt.question == "Does that capture what you meant?"
+
+
+async def test_profile_interview_confirm_saves_pending_answer_and_advances() -> None:
+    state = await run_profile_interview(
+        _FakeSettings(),
+        _build_state(),
+        question_planner=_planner,
+        answer_interpreter=_interpreter,
+        answer_assessor=_assessor,
+    )
+    state.action = "answer"
+    state.user_answer = "Needed a scalable way to master student records."
+    answered = await run_profile_interview(
+        _FakeSettings(),
+        state,
+        question_planner=_planner,
+        answer_interpreter=_interpreter,
+        answer_assessor=_assessor,
+    )
+
+    answered.action = "confirm"
+    confirmed = await run_profile_interview(
+        _FakeSettings(),
+        answered,
+        question_planner=_planner,
+        answer_interpreter=_interpreter,
+        answer_assessor=_assessor,
+    )
+
+    saved = next(item for item in confirmed.canonical_profile.evidence_items if item.id == "dfe_entity_resolution")
     assert saved.situation == "Needed a scalable way to master student records."
     assert saved.tone_sample == "Needed a scalable way to master student records."
-    assert updated.canonical_profile.voice_samples == [
+    assert confirmed.canonical_profile.voice_samples == [
         "Needed a scalable way to master student records."
     ]
-    assert "direct" in updated.canonical_profile.voice_profile.tone_labels
-    assert updated.canonical_profile.voice_profile.confidence == "low"
-    assert updated.last_answer_assessment.score == 0.8
-    assert updated.item_quality_scores["dfe_entity_resolution"] == 0.8
-    assert updated.overall_answer_quality_score == 0.8
-    assert updated.overall_profile_score is not None
-    assert updated.status == "waiting_for_user"
-    assert updated.current_gap == "task"
-    assert updated.current_question == "Question for task?"
-    assert updated.current_prompt.suggested_answer == "Suggested answer for task."
+    assert "direct" in confirmed.canonical_profile.voice_profile.tone_labels
+    assert confirmed.item_quality_scores["dfe_entity_resolution"] == 0.8
+    assert confirmed.overall_answer_quality_score == 0.8
+    assert confirmed.overall_profile_score is not None
+    assert confirmed.status == "waiting_for_user"
+    assert confirmed.current_gap == "task"
+    assert confirmed.current_question == "Question for task?"
+    assert confirmed.current_prompt.suggested_answer == "Suggested answer for task."
+
+
+async def test_profile_interview_clarify_and_rephrase_keep_session_open() -> None:
+    state = await run_profile_interview(
+        _FakeSettings(),
+        _build_state(),
+        question_planner=_planner,
+        answer_interpreter=_interpreter,
+        answer_assessor=_assessor,
+    )
+
+    state.action = "clarify"
+    clarified = await run_profile_interview(
+        _FakeSettings(),
+        state,
+        question_planner=_planner,
+        answer_interpreter=_interpreter,
+        answer_assessor=_assessor,
+    )
+    assert clarified.status == "waiting_for_user"
+    assert clarified.current_prompt.mode == "clarify"
+    assert clarified.current_prompt.assistant_message
+
+    clarified.action = "rephrase"
+    rephrased = await run_profile_interview(
+        _FakeSettings(),
+        clarified,
+        question_planner=_planner,
+        answer_interpreter=_interpreter,
+        answer_assessor=_assessor,
+    )
+    assert rephrased.status == "waiting_for_user"
+    assert rephrased.current_prompt.mode == "question"
+    assert rephrased.current_prompt.assistant_message == "Here is another way to ask the same thing."
 
 
 async def test_profile_interview_approve_marks_item_and_moves_on() -> None:

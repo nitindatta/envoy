@@ -229,6 +229,7 @@ Skills: {state.skills}"""
                         "(a role, project, skill, or summary point). "
                         "Always pick something — your job is to find the best available evidence, "
                         "not to judge fit. Rate each match as STRONG, MODERATE, or WEAK. "
+                        "When evidence items are marked [approved], prefer them over draft evidence when they support the same requirement. "
                         "Prefer evidence lines marked ★ (quantified metrics) — cite the number directly. "
                         "Format each item as: [STRONG/MODERATE/WEAK] Requirement → Evidence\n"
                         "Do not say 'no match' or 'no evidence'. Always cite the closest item."
@@ -427,6 +428,7 @@ Skills: {state.skills}"""
                             "CONTENT RULES:\n"
                             "- Talking points are your only source of facts. Do not invent claims.\n"
                             "- Write ONLY about what the job asked for. Do not volunteer unrelated skills.\n"
+                            "- Prefer approved evidence items when multiple talking points cover the same requirement.\n"
                             "- Every claim must be anchored to a result, not just an activity.\n"
                             "  BAD: 'I built a data pipeline using Databricks and dbt'\n"
                             "  GOOD: 'I built a data pipeline using Databricks and dbt that cut data latency from 4h to 30min'\n"
@@ -536,6 +538,42 @@ Skills: {state.skills}"""
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _format_experience(profile: dict) -> str:
+    if profile.get("evidence_items"):
+        lines = []
+        for item in _sorted_evidence_items(profile)[:8]:
+            header = f"- {item.get('source', 'Evidence')}"
+            role_title = item.get("role_title")
+            if role_title:
+                header += f" · {role_title}"
+            confidence = str(item.get("confidence", "")).strip()
+            if confidence:
+                header += f" [{confidence}]"
+
+            details: list[str] = []
+            if item.get("situation"):
+                details.append(f"Situation: {item['situation']}")
+            if item.get("task"):
+                details.append(f"Task: {item['task']}")
+            if item.get("action"):
+                details.append(f"Action: {item['action']}")
+            if item.get("outcome"):
+                details.append(f"Outcome: {item['outcome']}")
+            for metric in item.get("metrics", [])[:3]:
+                details.append(f"★ {metric}")
+            proof_points = [
+                str(point).strip()
+                for point in item.get("proof_points", [])[:2]
+                if str(point).strip()
+            ]
+            for point in proof_points:
+                if point not in details:
+                    details.append(f"• {point}")
+            line = header
+            if details:
+                line += "\n    " + "\n    ".join(details)
+            lines.append(line)
+        return "\n".join(lines) or "Not provided"
+
     lines = []
     for exp in profile.get("experience", [])[:8]:
         line = f"- {exp.get('title', '')} at {exp.get('company', '')}"
@@ -551,6 +589,19 @@ def _format_experience(profile: dict) -> str:
 
 
 def _format_projects(profile: dict) -> str:
+    if profile.get("evidence_items"):
+        lines = []
+        for item in _sorted_evidence_items(profile):
+            if item.get("role_title") != "Project":
+                continue
+            summary_parts = [
+                str(item.get("action", "")).strip(),
+                str(item.get("outcome", "")).strip(),
+            ]
+            summary = " ".join(part for part in summary_parts if part)
+            lines.append(f"- {item.get('source')}: {summary}".strip())
+        return "\n".join(line for line in lines if line) or "None listed"
+
     lines = [
         f"- {p.get('name')}: {p.get('summary', '')}"
         for p in profile.get("selected_projects", [])
@@ -559,10 +610,44 @@ def _format_projects(profile: dict) -> str:
 
 
 def _format_narrative_strengths(profile: dict) -> str:
+    if profile.get("evidence_items"):
+        items = _sorted_evidence_items(profile)
+        strengths: list[str] = []
+        for item in items[:6]:
+            fragments = [
+                str(item.get("action", "")).strip(),
+                str(item.get("outcome", "")).strip(),
+            ]
+            metrics = [str(metric).strip() for metric in item.get("metrics", []) if str(metric).strip()]
+            line = " ".join(fragment for fragment in fragments if fragment)
+            if metrics:
+                line = f"{line} Metrics: {'; '.join(metrics[:2])}".strip()
+            if line:
+                strengths.append(f"- {item.get('source')}: {line}")
+        return "\n".join(strengths)
+
     items = profile.get("narrative_strengths", [])
     if not items:
         return ""
     return "\n".join(f"- {s}" for s in items)
+
+
+def _sorted_evidence_items(profile: dict) -> list[dict]:
+    evidence_items = [item for item in profile.get("evidence_items", []) if isinstance(item, dict)]
+
+    def _sort_key(item: dict) -> tuple[int, int, str]:
+        confidence = str(item.get("confidence", "")).strip().lower()
+        confidence_rank = 0 if confidence == "approved" else 1
+        gaps = sum(
+            1
+            for field in ("situation", "task", "outcome")
+            if not str(item.get(field, "")).strip()
+        )
+        if not item.get("metrics"):
+            gaps += 1
+        return (confidence_rank, gaps, str(item.get("source", "")).lower())
+
+    return sorted(evidence_items, key=_sort_key)
 
 
 # ── Public entry point ─────────────────────────────────────────────────────
@@ -617,3 +702,23 @@ async def run_cover_letter(
         gaps=state.gaps,
         evidence=state.evidence,
     )
+
+
+from app.workflows.cover_letter_engine import (  # noqa: E402
+    CoverLetterResult,
+    CritiqueResult,
+    EvidenceCard,
+    LetterPlan,
+    LetterPlanParagraph,
+    RequirementItem,
+    SelectedEvidenceMatch,
+    _build_evidence_catalog,
+    _fallback_plan_letter,
+    _fallback_select_evidence,
+    _format_experience,
+    _format_narrative_strengths,
+    _format_projects,
+    _sorted_evidence_items,
+    build_cover_letter_graph,
+    run_cover_letter,
+)
