@@ -70,6 +70,9 @@ export const applicationSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   last_apply_step_json: z.string().nullable().optional(),
+  is_suitable: z.boolean().optional(),
+  gaps_json: z.string().optional().default("[]"),
+  fit_score: z.number().nullable().optional(),
   // joined job fields (from list endpoint)
   job_title: z.string().nullable().optional(),
   job_company: z.string().nullable().optional(),
@@ -103,6 +106,7 @@ export const prepareResponseSchema = z.object({
   questions: z.array(z.object({ question: z.string(), answer: z.string() })),
   is_suitable: z.boolean().optional(),
   gaps: z.array(z.string()).optional(),
+  fit_score: z.number().nullable().optional(),
   match_evidence: z.string().default(""),
 });
 export type PrepareResponse = z.infer<typeof prepareResponseSchema>;

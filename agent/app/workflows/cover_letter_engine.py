@@ -193,6 +193,7 @@ class CoverLetterResult(BaseModel):
     is_suitable: bool
     cover_letter: str = ""
     gaps: list[str] = Field(default_factory=list)
+    fit_score: float | None = None
     evidence: str = ""
 
 
@@ -1196,5 +1197,6 @@ async def run_cover_letter(
         is_suitable=state.is_suitable,
         cover_letter=state.cover_letter,
         gaps=state.gaps,
+        fit_score=state.fit_score,
         evidence=state.evidence,
     )

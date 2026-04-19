@@ -59,17 +59,139 @@ function elapsedTime(iso: string): string {
 
 type EvidenceItem = { rating: "STRONG" | "MODERATE" | "WEAK"; requirement: string; evidence: string };
 
+type FitSummary = {
+  score: number;
+  strong: number;
+  moderate: number;
+  weak: number;
+  total: number;
+  topWeak: EvidenceItem[];
+};
+
 function parseEvidence(raw: string): EvidenceItem[] {
   return raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const m = line.match(/^\[(STRONG|MODERATE|WEAK)\]\s*(.+?)\s*→\s*(.+)$/);
+      const m = line.match(/^\[(STRONG|MODERATE|WEAK)\]\s*(.+?)\s*(?:→|->)\s*(.+)$/);
       if (m) return { rating: m[1] as "STRONG" | "MODERATE" | "WEAK", requirement: m[2], evidence: m[3] };
       return null;
     })
     .filter((x): x is EvidenceItem => x !== null);
+}
+
+function parseJsonStringArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildFitSummary(evidence: EvidenceItem[]): FitSummary {
+  const strong = evidence.filter((item) => item.rating === "STRONG").length;
+  const moderate = evidence.filter((item) => item.rating === "MODERATE").length;
+  const weak = evidence.filter((item) => item.rating === "WEAK").length;
+  const total = evidence.length;
+  const score = total === 0 ? 0 : Math.round(((strong + moderate * 0.68 + weak * 0.25) / total) * 100);
+  return {
+    score,
+    strong,
+    moderate,
+    weak,
+    total,
+    topWeak: evidence.filter((item) => item.rating === "WEAK").slice(0, 4),
+  };
+}
+
+function improvementHintForWeakEvidence(item: EvidenceItem): string {
+  const text = `${item.requirement} ${item.evidence}`.toLowerCase();
+  if (text.includes("no safe claim")) {
+    return "Add or refine a canonical evidence item that directly proves this requirement.";
+  }
+  if (text.includes("rapid") || text.includes("prototype") || text.includes("production-ready") || text.includes("vibe coding")) {
+    return "Make the matching project explicitly say how quickly you prototyped, how it became production-ready, and how AI-assisted development was used.";
+  }
+  if (text.includes("year") || text.includes("experience")) {
+    return "Add explicit years/scope to the relevant evidence item instead of relying on role titles alone.";
+  }
+  if (text.includes("security") || text.includes("permission") || text.includes("prompt injection")) {
+    return "Add security guardrails, permissioning, or prompt-safety proof points if you have real examples.";
+  }
+  if (text.includes("cost") || text.includes("token")) {
+    return "Add concrete cost-control or token-usage examples if they are true.";
+  }
+  return "Strengthen the matched evidence with a clearer task, outcome, metric, or exact keyword from the role.";
+}
+
+function FitAnalysisPanel({ evidence, gaps, fitScore }: { evidence: EvidenceItem[]; gaps: string[]; fitScore?: number | null }) {
+  const summary = buildFitSummary(evidence);
+  const hasExactScore = typeof fitScore === "number";
+  const displayScore = hasExactScore ? Math.round(fitScore * 100) : summary.score;
+  return (
+    <div
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "1rem",
+        marginBottom: "1rem",
+        background: "#fff",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6b7280" }}>
+            Fit analysis
+          </div>
+          <div style={{ marginTop: 4, fontSize: 14, color: "#374151" }}>
+            {hasExactScore ? "Fit score" : "Evidence score estimate"}: <strong>{displayScore}%</strong>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", fontSize: 12 }}>
+          <span style={{ color: "#15803d" }}>{summary.strong} strong</span>
+          <span style={{ color: "#92400e" }}>{summary.moderate} moderate</span>
+          <span style={{ color: "#991b1b" }}>{summary.weak} weak</span>
+        </div>
+      </div>
+
+      {gaps.length > 0 && (
+        <div style={{ marginTop: "0.85rem" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+            Blocking gaps
+          </div>
+          <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#4b5563", fontSize: 13, lineHeight: 1.5 }}>
+            {gaps.map((gap) => (
+              <li key={gap}>{gap}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {summary.topWeak.length > 0 && (
+        <div style={{ marginTop: "0.85rem" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+            How to improve the profile for this role
+          </div>
+          <div style={{ display: "grid", gap: "0.5rem" }}>
+            {summary.topWeak.map((item) => (
+              <div key={`${item.requirement}-${item.evidence}`} style={{ border: "1px solid #f3f4f6", borderRadius: 6, padding: "0.65rem", background: "#f9fafb" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{item.requirement}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#6b7280" }}>
+                  Current evidence: {item.evidence}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>
+                  {improvementHintForWeakEvidence(item)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MatchEvidencePanel({ evidence, showEvidence, setShowEvidence }: {
@@ -614,6 +736,7 @@ export default function ReviewDeskPage() {
     if (!detail?.match_evidence) return [];
     return parseEvidence(detail.match_evidence);
   }, [detail?.match_evidence]);
+  const fitSummary = useMemo(() => buildFitSummary(parsedEvidence), [parsedEvidence]);
 
   // ---------------------------------------------------------------------------
   // Mutations
@@ -713,6 +836,7 @@ export default function ReviewDeskPage() {
     const jobCompany = detail.job?.company ?? selectedApp.job_company ?? "";
     const jobSourceUrl = detail.job?.source_url ?? selectedApp.job_source_url ?? null;
     const jobSummary = detail.job?.summary ?? selectedApp.job_summary ?? null;
+    const fitGaps = parseJsonStringArray(detail.application.gaps_json);
 
     // Header shared across most panels
     const header = (
@@ -849,6 +973,12 @@ export default function ReviewDeskPage() {
             <p style={{ fontWeight: 600, margin: "0 0 0.5rem", color: "#92400e" }}>
               Profile does not match this role
             </p>
+            {parsedEvidence.length > 0 && (
+              <p style={{ margin: "0 0 0.75rem", color: "#78350f", fontSize: 14 }}>
+                The fit engine found {fitSummary.strong} strong, {fitSummary.moderate} moderate, and{" "}
+                {fitSummary.weak} weak evidence matches.
+              </p>
+            )}
             {parsedEvidence.filter((e) => e.rating === "WEAK").length > 0 && (
               <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#78350f", fontSize: 14 }}>
                 {parsedEvidence.filter((e) => e.rating === "WEAK").map((e, i) => (
@@ -857,6 +987,12 @@ export default function ReviewDeskPage() {
               </ul>
             )}
           </div>
+          <FitAnalysisPanel evidence={parsedEvidence} gaps={fitGaps} fitScore={detail.application.fit_score} />
+          <MatchEvidencePanel
+            evidence={parsedEvidence}
+            showEvidence={showEvidence}
+            setShowEvidence={setShowEvidence}
+          />
           <button
             onClick={() => discardMutation.mutate(appId)}
             disabled={discardMutation.isPending}
@@ -1104,22 +1240,31 @@ export default function ReviewDeskPage() {
             <p style={{ fontWeight: 600, color: "#15803d", margin: "0 0 0.75rem" }}>
               Application approved. Ready to apply to SEEK.
             </p>
-            <button
-              onClick={() => applyMutation.mutate(appId)}
-              disabled={applyMutation.isPending}
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: "#2563eb",
-                color: "#fff",
-                border: "none",
-                borderRadius: 6,
-                cursor: applyMutation.isPending ? "not-allowed" : "pointer",
-                fontSize: 14,
-                fontWeight: 600,
-              }}
-            >
-              {applyMutation.isPending ? "Queuing…" : "Start Applying"}
-            </button>
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <button
+                onClick={() => applyMutation.mutate(appId)}
+                disabled={applyMutation.isPending}
+                style={{
+                  padding: "0.5rem 1.5rem",
+                  background: "#2563eb",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: applyMutation.isPending ? "not-allowed" : "pointer",
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                {applyMutation.isPending ? "Queuing…" : "Start Applying"}
+              </button>
+              <button
+                onClick={() => discardMutation.mutate(appId)}
+                disabled={discardMutation.isPending}
+                style={{ padding: "0.5rem 1.25rem", background: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: discardMutation.isPending ? "not-allowed" : "pointer", fontSize: 14 }}
+              >
+                {discardMutation.isPending ? "Discarding…" : "Discard"}
+              </button>
+            </div>
             {applyMutation.isError && (
               <p style={{ color: "red", marginTop: 8, fontSize: 13 }}>
                 {applyMutation.error instanceof Error ? applyMutation.error.message : "Unknown error"}

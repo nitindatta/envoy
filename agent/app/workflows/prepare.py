@@ -85,6 +85,7 @@ def build_prepare_graph(
             "cover_letter": cl_result.cover_letter,
             "is_suitable": cl_result.is_suitable,
             "gaps": cl_result.gaps,
+            "fit_score": cl_result.fit_score,
             "match_evidence": cl_result.evidence,
         }
 
@@ -114,6 +115,7 @@ def build_prepare_graph(
                 existing_app_id,
                 is_suitable=state.is_suitable,
                 gaps=state.gaps,
+                fit_score=state.fit_score,
                 new_state=new_state,
             )
             app_id = existing_app_id
@@ -129,6 +131,7 @@ def build_prepare_graph(
                 source_url=job.source_url,
                 is_suitable=state.is_suitable,
                 gaps=state.gaps,
+                fit_score=state.fit_score,
             )
             log.info("[persist] created application_id=%s for job=%s suitable=%s", app_id, state.job_id, state.is_suitable)
 
@@ -202,7 +205,7 @@ async def run_prepare(
         # Old cache-hit path (only used for sync /workflows/prepare endpoint)
         cached = await app_repo.get_active_by_job_id(job_id)
         if cached:
-            app_id, is_suitable, gaps = cached
+            app_id, is_suitable, gaps, fit_score = cached
             match_evidence = await draft_repo.get_match_evidence(app_id)
             if match_evidence:
                 cover_letter = await draft_repo.get_cover_letter(app_id)
@@ -214,6 +217,7 @@ async def run_prepare(
                     match_evidence=match_evidence,
                     is_suitable=is_suitable,
                     gaps=gaps,
+                    fit_score=fit_score,
                     detail=None,
                 )
             # No match_evidence — old application record. Discard it and re-prepare.

@@ -27,6 +27,7 @@ class SqliteApplicationRepository:
         source_url: str,
         is_suitable: bool = True,
         gaps: list[str] | None = None,
+        fit_score: float | None = None,
     ) -> str:
         app_id = str(uuid.uuid4())
         now = _now()
@@ -34,11 +35,11 @@ class SqliteApplicationRepository:
             """
             INSERT INTO applications
                 (id, job_id, source_provider, source_url, state,
-                 approval_required, is_suitable, gaps_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'prepared', 1, ?, ?, ?, ?)
+                 approval_required, is_suitable, gaps_json, fit_score, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'prepared', 1, ?, ?, ?, ?, ?)
             """,
             (app_id, job_id, source_provider, source_url,
-             1 if is_suitable else 0, json.dumps(gaps or []), now, now),
+             1 if is_suitable else 0, json.dumps(gaps or []), fit_score, now, now),
         )
         await self._conn.commit()
         return app_id
@@ -55,8 +56,8 @@ class SqliteApplicationRepository:
         now = _now()
         await self._conn.execute(
             "INSERT INTO applications "
-            "(id, job_id, source_provider, source_url, state, approval_required, is_suitable, gaps_json, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'preparing', 1, 1, '[]', ?, ?)",
+            "(id, job_id, source_provider, source_url, state, approval_required, is_suitable, gaps_json, fit_score, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'preparing', 1, 1, '[]', NULL, ?, ?)",
             (app_id, job_id, source_provider, source_url, now, now),
         )
         await self._conn.commit()
@@ -68,11 +69,12 @@ class SqliteApplicationRepository:
         *,
         is_suitable: bool,
         gaps: list[str],
+        fit_score: float | None = None,
         new_state: str = "prepared",
     ) -> None:
         await self._conn.execute(
-            "UPDATE applications SET is_suitable=?, gaps_json=?, state=?, updated_at=? WHERE id=?",
-            (1 if is_suitable else 0, json.dumps(gaps), new_state, _now(), app_id),
+            "UPDATE applications SET is_suitable=?, gaps_json=?, fit_score=?, state=?, updated_at=? WHERE id=?",
+            (1 if is_suitable else 0, json.dumps(gaps), fit_score, new_state, _now(), app_id),
         )
         await self._conn.commit()
 
@@ -92,7 +94,8 @@ class SqliteApplicationRepository:
 
     async def get(self, app_id: str) -> Application | None:
         async with self._conn.execute(
-            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json "
+            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json, "
+            "is_suitable, gaps_json, fit_score "
             "FROM applications WHERE id = ?",
             (app_id,),
         ) as cur:
@@ -108,13 +111,16 @@ class SqliteApplicationRepository:
             created_at=datetime.fromisoformat(row[5]),
             updated_at=datetime.fromisoformat(row[6]),
             last_apply_step_json=row[7],
+            is_suitable=bool(row[8]),
+            gaps_json=row[9] or "[]",
+            fit_score=row[10],
         )
 
-    async def get_active_by_job_id(self, job_id: str) -> tuple[str, bool, list[str]] | None:
-        """Return (application_id, is_suitable, gaps) for the latest non-discarded,
+    async def get_active_by_job_id(self, job_id: str) -> tuple[str, bool, list[str], float | None] | None:
+        """Return (application_id, is_suitable, gaps, fit_score) for the latest non-discarded,
         non-preparing application, or None."""
         async with self._conn.execute(
-            "SELECT id, is_suitable, gaps_json FROM applications "
+            "SELECT id, is_suitable, gaps_json, fit_score FROM applications "
             "WHERE job_id = ? AND state NOT IN ('discarded', 'preparing') "
             "ORDER BY created_at DESC LIMIT 1",
             (job_id,),
@@ -122,7 +128,7 @@ class SqliteApplicationRepository:
             row = await cur.fetchone()
         if row is None:
             return None
-        return row[0], bool(row[1]), json.loads(row[2])
+        return row[0], bool(row[1]), json.loads(row[2]), row[3]
 
     async def list_all(
         self,
@@ -131,7 +137,8 @@ class SqliteApplicationRepository:
         exclude_discarded: bool = False,
     ) -> list[Application]:
         base_select = (
-            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json "
+            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json, "
+            "is_suitable, gaps_json, fit_score "
             "FROM applications"
         )
         if state:
@@ -157,6 +164,9 @@ class SqliteApplicationRepository:
                 created_at=datetime.fromisoformat(r[5]),
                 updated_at=datetime.fromisoformat(r[6]),
                 last_apply_step_json=r[7],
+                is_suitable=bool(r[8]),
+                gaps_json=r[9] or "[]",
+                fit_score=r[10],
             )
             for r in rows
         ]

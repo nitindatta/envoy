@@ -53,6 +53,7 @@ async def start_prepare(request: Request, body: PrepareRequest) -> PrepareRespon
         questions=state.questions,
         is_suitable=state.is_suitable,
         gaps=state.gaps,
+        fit_score=state.fit_score,
         match_evidence=state.match_evidence,
     )
 

@@ -37,6 +37,9 @@ class Application(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_apply_step_json: str | None = None
+    is_suitable: bool = True
+    gaps_json: str = "[]"
+    fit_score: float | None = None
 
 
 class Draft(BaseModel):
@@ -67,6 +70,7 @@ class PrepareResponse(BaseModel):
     questions: list[dict[str, str]] = Field(default_factory=list)
     is_suitable: bool = True
     gaps: list[str] = Field(default_factory=list)
+    fit_score: float | None = None
     match_evidence: str = ""  # [STRONG/MODERATE/WEAK] requirement → evidence lines
 
 
@@ -85,6 +89,7 @@ class PrepareState(BaseModel):
     questions: list[dict[str, str]] = Field(default_factory=list)
     is_suitable: bool = True
     gaps: list[str] = Field(default_factory=list)
+    fit_score: float | None = None
 
     # Persisted
     application_id: str = ""
