@@ -1,4 +1,4 @@
-"""SEEK search workflow.
+"""Provider search workflow (SEEK, Indeed).
 
 LangGraph pipeline: search_jobs → filter_jobs → persist_jobs.
 
@@ -11,20 +11,20 @@ from __future__ import annotations
 from langgraph.graph import END, StateGraph
 
 from app.persistence.sqlite.jobs import SqliteJobRepository
-from app.policy.seek import is_blocked
+from app.providers import registry
 from app.state.search import BlockedJob, SearchState
 from app.tools.client import ToolClient
-from app.tools.seek import search_seek
 
 
 def build_search_graph(
     tool_client: ToolClient,
     repository: SqliteJobRepository,
 ):
-    """Build a compiled LangGraph for the SEEK search workflow."""
+    """Build a compiled LangGraph for the provider search workflow."""
 
     async def search_jobs(state: SearchState) -> dict[str, object]:
-        jobs = await search_seek(
+        adapter = registry.get(state.provider)
+        jobs = await adapter.search(
             tool_client,
             keywords=state.keywords,
             location=state.location,
@@ -33,10 +33,11 @@ def build_search_graph(
         return {"discovered": jobs}
 
     async def filter_jobs(state: SearchState) -> dict[str, object]:
+        adapter = registry.get(state.provider)
         kept = []
         blocked = []
         for job in state.discovered:
-            reason = is_blocked(job)
+            reason = adapter.is_blocked(job)
             if reason is None:
                 kept.append(job)
             else:
@@ -80,10 +81,11 @@ async def run_search(
     keywords: str,
     location: str | None,
     max_pages: int,
+    provider: str = "seek",
 ) -> SearchState:
-    """Run the SEEK search workflow synchronously and return the final state."""
+    """Run the search workflow for the given provider and return the final state."""
     graph = build_search_graph(tool_client, repository)
     result = await graph.ainvoke(
-        SearchState(keywords=keywords, location=location, max_pages=max_pages)
+        SearchState(provider=provider, keywords=keywords, location=location, max_pages=max_pages)
     )
     return SearchState.model_validate(result)

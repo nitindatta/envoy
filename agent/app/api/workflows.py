@@ -8,6 +8,8 @@ from app.services.ai import predict_questions
 from app.state.apply import ApplyRequest, ApplyResumeRequest, ApplyStepResponse
 from app.state.jobs import SearchRequest, SearchResponse
 from app.state.prepare import PrepareRequest, PrepareResponse
+from app.providers import registry
+from app.tools.indeed import IndeedDriftError, IndeedToolError
 from app.tools.seek import SeekDriftError, SeekToolError
 from app.tools.seek_detail import SeekDetailDriftError, SeekDetailError
 from app.workflows.apply import resume_apply, run_apply
@@ -160,7 +162,7 @@ def _apply_response(state) -> ApplyStepResponse:
 
 @router.post("/workflows/search", response_model=SearchResponse)
 async def start_search(request: Request, body: SearchRequest) -> SearchResponse:
-    if body.provider != "seek":
+    if body.provider not in registry.names():
         raise HTTPException(status_code=400, detail=f"unsupported provider: {body.provider}")
     try:
         state = await run_search(
@@ -169,11 +171,16 @@ async def start_search(request: Request, body: SearchRequest) -> SearchResponse:
             keywords=body.keywords,
             location=body.location,
             max_pages=body.max_pages,
+            provider=body.provider,
         )
     except SeekDriftError as exc:
         raise HTTPException(status_code=503, detail=f"seek parser drift: {exc.drift.parser_id}")
     except SeekToolError as exc:
         raise HTTPException(status_code=502, detail=f"seek tool error: {exc.error.type}")
+    except IndeedDriftError as exc:
+        raise HTTPException(status_code=503, detail=f"indeed parser drift: {exc.drift.parser_id}")
+    except IndeedToolError as exc:
+        raise HTTPException(status_code=502, detail=f"indeed tool error: {exc.error.type}")
 
     return SearchResponse(
         discovered=len(state.discovered) + len(state.blocked),

@@ -11,19 +11,10 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class SeekJobDetail(BaseModel):
-    """Full job detail as returned by tools/ SEEK detail route."""
+from app.state.provider_job_detail import ProviderJobDetail
 
-    provider_job_id: str
-    title: str
-    company: str
-    location: str | None = None
-    salary: str | None = None
-    work_type: str | None = None
-    listed_at: str | None = None
-    description: str
-    classification: str | None = None
-    url: str
+# Backward-compat alias — use ProviderJobDetail for new code.
+SeekJobDetail = ProviderJobDetail
 
 
 class Application(BaseModel):

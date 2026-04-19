@@ -4,6 +4,7 @@ import { makeAuthHook } from './auth.js';
 import { ok } from './envelope.js';
 import { registerSeekSearchRoute } from './providers/seek/search.js';
 import { registerSeekDetailRoute } from './providers/seek/detail.js';
+import { registerIndeedSearchRoute } from './providers/indeed/search.js';
 import { registerBrowserRoutes } from './browser/routes.js';
 
 export function buildServer(secret: string) {
@@ -32,6 +33,7 @@ export function buildServer(secret: string) {
 
   registerSeekSearchRoute(app);
   registerSeekDetailRoute(app);
+  registerIndeedSearchRoute(app);
   registerBrowserRoutes(app);
 
   return app;

@@ -91,6 +91,8 @@ from app.persistence.sqlite.workflow_runs import (
     SqliteBrowserSessionRepository,
     SqliteWorkflowRunRepository,
 )
+from app.providers import registry
+from app.providers.seek import SeekAdapter
 from app.settings import get_settings
 from app.tools.client import ToolClient
 from app.worker.queue_worker import run_apply_worker, run_prepare_worker
@@ -98,6 +100,8 @@ from app.worker.queue_worker import run_apply_worker, run_prepare_worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    registry.register("seek", SeekAdapter())
+
     settings = app.state.settings
     database = await Database.open(settings.resolved_sqlite_path)
     app.state.database = database

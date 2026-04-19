@@ -141,6 +141,7 @@ export default function JobsPage() {
   const [keywords, setKeywords] = useState("python");
   const [location, setLocation] = useState("");
   const [maxPages, setMaxPages] = useState(3);
+  const [provider, setProvider] = useState<"seek" | "indeed">("seek");
   const [activeTag, setActiveTag] = useState<string | undefined>(undefined);
 
   const tagsQuery = useQuery({
@@ -158,6 +159,7 @@ export default function JobsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["search-tags"] });
+      queryClient.invalidateQueries({ queryKey: ["applications"] });
     },
   });
 
@@ -183,9 +185,20 @@ export default function JobsPage() {
         className="flex flex-wrap items-end gap-3 rounded-md border bg-white p-4"
         onSubmit={(e) => {
           e.preventDefault();
-          searchMutation.mutate({ provider: "seek", keywords, location: location || undefined, max_pages: maxPages });
+          searchMutation.mutate({ provider, keywords, location: location || undefined, max_pages: maxPages });
         }}
       >
+        <label className="flex flex-col text-sm">
+          <span className="mb-1 text-slate-600">Provider</span>
+          <select
+            className="rounded border px-2 py-1 bg-white"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as "seek" | "indeed")}
+          >
+            <option value="seek">SEEK</option>
+            <option value="indeed">Indeed</option>
+          </select>
+        </label>
         <label className="flex flex-col text-sm">
           <span className="mb-1 text-slate-600">Keywords</span>
           <input

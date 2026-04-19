@@ -91,16 +91,17 @@ async def ignore_job(job_id: str, request: Request) -> dict:
 
 async def _analyse_job(settings, tool_client, analysis_repo: SqliteJobAnalysisRepository, job: Job) -> None:
     """Background task: fetch SEEK detail + parse JD into structured cache."""
-    from app.tools.seek_detail import fetch_job_detail
+    from app.providers import registry
 
-    log.info("[analyse_job] start job_id=%s title=%s", job.id, job.title)
+    log.info("[analyse_job] start job_id=%s provider=%s title=%s", job.id, job.provider, job.title)
     try:
         provider_job_id = str(job.payload.get("provider_job_id", ""))
         if not provider_job_id:
             log.warning("[analyse_job] no provider_job_id for job_id=%s", job.id)
             return
 
-        detail = await fetch_job_detail(tool_client, job_id=provider_job_id)
+        adapter = registry.get(job.provider)
+        detail = await adapter.fetch_detail(tool_client, provider_job_id)
         log.info("[analyse_job] fetched detail job_id=%s desc_len=%d", job.id, len(detail.description))
 
         client = AsyncOpenAI(base_url=settings.openai_base_url, api_key=settings.openai_api_key)
@@ -146,4 +147,4 @@ async def _analyse_job(settings, tool_client, analysis_repo: SqliteJobAnalysisRe
                  job.id, len(parsed.get("must_have", [])), len(parsed.get("duties", [])))
 
     except Exception as exc:
-        log.warning("[analyse_job] failed job_id=%s error=%s", job.id, exc)
+        log.warning("[analyse_job] failed job_id=%s provider=%s error=%s", job.id, job.provider, exc)

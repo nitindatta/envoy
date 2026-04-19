@@ -25,8 +25,8 @@ from app.persistence.sqlite.job_analysis import SqliteJobAnalysisRepository
 from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.settings import Settings
 from app.state.prepare import PrepareState
+from app.providers import registry
 from app.tools.client import ToolClient
-from app.tools.seek_detail import fetch_job_detail
 from app.workflows.cover_letter import run_cover_letter
 
 
@@ -54,8 +54,9 @@ def build_prepare_graph(
             log.warning("[fetch_detail] job_id=%s has no provider_job_id", state.job_id)
             return {"error": f"job {state.job_id} has no provider_job_id in payload"}
 
-        log.info("[fetch_detail] fetching detail for provider_job_id=%s title=%s", provider_job_id, job.title)
-        detail = await fetch_job_detail(tool_client, job_id=provider_job_id)
+        log.info("[fetch_detail] fetching detail for provider=%s provider_job_id=%s title=%s", job.provider, provider_job_id, job.title)
+        adapter = registry.get(job.provider)
+        detail = await adapter.fetch_detail(tool_client, provider_job_id)
         log.info("[fetch_detail] done title=%s company=%s desc_len=%d",
                  detail.title, detail.company, len(detail.description))
         return {"detail": detail}
