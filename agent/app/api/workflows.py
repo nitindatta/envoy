@@ -12,6 +12,8 @@ from app.providers import registry
 from app.tools.indeed import IndeedDriftError, IndeedToolError
 from app.tools.seek import SeekDriftError, SeekToolError
 from app.tools.indeed_detail import IndeedDetailDriftError, IndeedDetailError
+from app.tools.linkedin import LinkedInDriftError, LinkedInToolError
+from app.tools.linkedin_detail import LinkedInDetailDriftError, LinkedInDetailError
 from app.tools.seek_detail import SeekDetailDriftError, SeekDetailError
 from app.workflows.apply import resume_apply, run_apply
 from app.workflows.prepare import run_prepare
@@ -40,6 +42,10 @@ async def start_prepare(request: Request, body: PrepareRequest) -> PrepareRespon
         raise HTTPException(status_code=503, detail=f"indeed detail drift: {exc.reason}")
     except IndeedDetailError as exc:
         raise HTTPException(status_code=502, detail=f"indeed detail error: {exc.error.type}")
+    except LinkedInDetailDriftError as exc:
+        raise HTTPException(status_code=503, detail=f"linkedin detail drift: {exc.reason}")
+    except LinkedInDetailError as exc:
+        raise HTTPException(status_code=502, detail=f"linkedin detail error: {exc.error.type}")
 
     if state.error:
         raise HTTPException(status_code=422, detail=state.error)
@@ -186,6 +192,10 @@ async def start_search(request: Request, body: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=503, detail=f"indeed parser drift: {exc.drift.parser_id}")
     except IndeedToolError as exc:
         raise HTTPException(status_code=502, detail=f"indeed tool error: {exc.error.type}")
+    except LinkedInDriftError as exc:
+        raise HTTPException(status_code=503, detail=f"linkedin parser drift: {exc.drift.parser_id}")
+    except LinkedInToolError as exc:
+        raise HTTPException(status_code=502, detail=f"linkedin tool error: {exc.error.type}")
 
     return SearchResponse(
         discovered=len(state.discovered) + len(state.blocked),

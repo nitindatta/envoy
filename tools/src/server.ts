@@ -6,6 +6,8 @@ import { registerSeekSearchRoute } from './providers/seek/search.js';
 import { registerSeekDetailRoute } from './providers/seek/detail.js';
 import { registerIndeedSearchRoute } from './providers/indeed/search.js';
 import { registerIndeedDetailRoute } from './providers/indeed/detail.js';
+import { registerLinkedInSearchRoute } from './providers/linkedin/search.js';
+import { registerLinkedInDetailRoute } from './providers/linkedin/detail.js';
 import { registerBrowserRoutes } from './browser/routes.js';
 
 export function buildServer(secret: string) {
@@ -36,6 +38,8 @@ export function buildServer(secret: string) {
   registerSeekDetailRoute(app);
   registerIndeedSearchRoute(app);
   registerIndeedDetailRoute(app);
+  registerLinkedInSearchRoute(app);
+  registerLinkedInDetailRoute(app);
   registerBrowserRoutes(app);
 
   return app;

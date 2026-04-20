@@ -4,39 +4,39 @@ import { drift, error, ok, type ToolResponse } from '../../envelope.js';
 import { getOrLaunchChrome as launchChrome } from '../../browser/chrome.js';
 import { parseDetail } from './parseDetail.js';
 
-const BASE_URL = 'https://www.seek.com.au';
+const BASE_URL = 'https://www.linkedin.com';
 
 const DetailRequestSchema = z.object({
   job_id: z.string().min(1),
 });
 
-export function registerSeekDetailRoute(app: FastifyInstance): void {
-  app.post('/tools/providers/seek/job', async (request) => {
+export function registerLinkedInDetailRoute(app: FastifyInstance): void {
+  app.post('/tools/providers/linkedin/job', async (request) => {
     const parsed = DetailRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return error('bad_request', parsed.error.message) satisfies ToolResponse<never>;
     }
 
     const { job_id } = parsed.data;
-    const url = `${BASE_URL}/job/${job_id}`;
+    const url = `${BASE_URL}/jobs/view/${job_id}`;
 
     const context = await launchChrome();
     const page = await context.newPage();
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
-      await page.waitForTimeout(1_500);
+      await page.waitForTimeout(2_000);
 
       const html = await page.content();
       const result = parseDetail(html, job_id, url);
 
       if (!result.ok) {
-        return drift('seek/detail', 'title and description present', result.reason);
+        return drift('linkedin/detail', 'title and description present', result.reason);
       }
 
       return ok({ job: result.detail });
     } finally {
-      await page.close(); // close only this tab, not the shared Chrome context
+      await page.close();
     }
   });
 }

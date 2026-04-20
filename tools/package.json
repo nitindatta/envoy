@@ -13,7 +13,9 @@
     "format": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
     "test": "vitest run",
     "dump:seek": "tsx scripts/dump-seek-fixture.ts",
-    "dump:seek-detail": "tsx scripts/dump-seek-detail.ts"
+    "dump:seek-detail": "tsx scripts/dump-seek-detail.ts",
+    "dump:linkedin": "tsx scripts/dump-linkedin.ts",
+    "dump:linkedin-detail": "tsx scripts/dump-linkedin-detail.ts"
   },
   "dependencies": {
     "@types/jsdom": "^28.0.1",

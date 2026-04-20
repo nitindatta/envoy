@@ -155,47 +155,68 @@ async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
 
     app_id = item.entity_id
     app_repo = app_state.application_repository
+    run_id: str | None = None
 
-    if item.queue_type == "apply":
-        run_repo = app_state.workflow_run_repository
-        run_id = await run_repo.create(application_id=app_id, workflow_type="apply")
-        apply_state = await run_apply(
-            app_state.settings,
-            app_state.tool_client,
-            app_repo,
-            app_state.draft_repository,
-            run_repo,
-            app_state.browser_session_repository,
-            app_state.database.connection,
-            application_id=app_id,
-            workflow_run_id=run_id,
-            question_cache=app_state.question_cache_repository,
-        )
-    else:  # resume
-        payload = item.payload
-        apply_state = await resume_apply(
-            app_state.settings,
-            app_state.tool_client,
-            app_repo,
-            app_state.draft_repository,
-            app_state.workflow_run_repository,
-            app_state.browser_session_repository,
-            app_state.database.connection,
-            workflow_run_id=payload["run_id"],
-            approved_values=payload.get("approved_values", {}),
-            action_label=payload.get("action_label", "Continue"),
-            action=payload.get("action", "continue"),
-            question_cache=app_state.question_cache_repository,
-        )
+    try:
+        if item.queue_type == "apply":
+            run_repo = app_state.workflow_run_repository
+            run_id = await run_repo.create(application_id=app_id, workflow_type="apply")
+            apply_state = await run_apply(
+                app_state.settings,
+                app_state.tool_client,
+                app_repo,
+                app_state.draft_repository,
+                run_repo,
+                app_state.browser_session_repository,
+                app_state.database.connection,
+                application_id=app_id,
+                workflow_run_id=run_id,
+                question_cache=app_state.question_cache_repository,
+            )
+        else:  # resume
+            payload = item.payload
+            run_id = payload["run_id"]
+            apply_state = await resume_apply(
+                app_state.settings,
+                app_state.tool_client,
+                app_repo,
+                app_state.draft_repository,
+                app_state.workflow_run_repository,
+                app_state.browser_session_repository,
+                app_state.database.connection,
+                workflow_run_id=run_id,
+                approved_values=payload.get("approved_values", {}),
+                action_label=payload.get("action_label", "Continue"),
+                action=payload.get("action", "continue"),
+                question_cache=app_state.question_cache_repository,
+            )
 
-    # Build response and persist it so portal can poll
-    response = _apply_response(apply_state)
-    await app_repo.update_apply_step(app_id, _json.dumps(response.model_dump()))
+        # Build response and persist it so portal can poll
+        response = _apply_response(apply_state)
+        await app_repo.update_apply_step(app_id, _json.dumps(response.model_dump()))
 
-    # Update application state for interrupt cases (node_finish didn't run yet)
-    status = response.status
-    if status == "needs_review":
-        await app_repo.update_state(app_id, "needs_review")
-    elif status == "awaiting_submit":
-        await app_repo.update_state(app_id, "awaiting_submit")
-    # Terminal states (applied/failed/paused) already updated by node_finish
+        # Update application state for interrupt cases (node_finish didn't run yet)
+        status = response.status
+        if status == "needs_review":
+            await app_repo.update_state(app_id, "needs_review")
+        elif status == "awaiting_submit":
+            await app_repo.update_state(app_id, "awaiting_submit")
+        # Terminal states (applied/failed/paused) already updated by node_finish
+
+    except Exception as exc:
+        # Persist the actual error into last_apply_step_json so the portal
+        # shows the real message rather than the generic fallback.
+        with contextlib.suppress(Exception):
+            error_step = {
+                "workflow_run_id": run_id or "",
+                "status": "failed",
+                "step": None,
+                "proposed_values": {},
+                "low_confidence_ids": [],
+                "submit_action_label": "Continue",
+                "step_history": [],
+                "error": str(exc),
+                "pause_reason": None,
+            }
+            await app_repo.update_apply_step(app_id, _json.dumps(error_step))
+        raise

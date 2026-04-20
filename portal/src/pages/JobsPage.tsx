@@ -141,7 +141,7 @@ export default function JobsPage() {
   const [keywords, setKeywords] = useState("python");
   const [location, setLocation] = useState("");
   const [maxPages, setMaxPages] = useState(3);
-  const [provider, setProvider] = useState<"seek" | "indeed">("seek");
+  const [provider, setProvider] = useState<"seek" | "indeed" | "linkedin">("seek");
   const [activeTag, setActiveTag] = useState<string | undefined>(undefined);
 
   const tagsQuery = useQuery({
@@ -193,10 +193,11 @@ export default function JobsPage() {
           <select
             className="rounded border px-2 py-1 bg-white"
             value={provider}
-            onChange={(e) => setProvider(e.target.value as "seek" | "indeed")}
+            onChange={(e) => setProvider(e.target.value as "seek" | "indeed" | "linkedin")}
           >
             <option value="seek">SEEK</option>
             <option value="indeed">Indeed</option>
+            <option value="linkedin">LinkedIn</option>
           </select>
         </label>
         <label className="flex flex-col text-sm">

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { error, ok, type ToolResponse } from '../../envelope.js';
+import { drift, error, ok, type ToolResponse } from '../../envelope.js';
 import { getOrLaunchChrome as launchChrome } from '../../browser/chrome.js';
 import { parseDetail } from './parseDetail.js';
 
@@ -31,7 +31,7 @@ export function registerIndeedDetailRoute(app: FastifyInstance): void {
       const result = parseDetail(html, job_id, url);
 
       if (!result.ok) {
-        return { status: 'drift' as const, drift: result.reason };
+        return drift('indeed/detail', 'title and description present', result.reason);
       }
 
       return ok({ job: result.detail });

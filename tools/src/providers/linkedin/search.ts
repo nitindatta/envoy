@@ -5,7 +5,7 @@ import { getOrLaunchChrome as launchChrome } from '../../browser/chrome.js';
 import { parseListing_guarded } from './parseListing.js';
 import { type ProviderJob } from '../types.js';
 
-const RESULTS_PER_PAGE = 10;
+const RESULTS_PER_PAGE = 25;
 
 const SearchRequestSchema = z.object({
   keywords: z.string().min(1),
@@ -13,14 +13,14 @@ const SearchRequestSchema = z.object({
   max_pages: z.number().int().min(1).max(10).default(1),
 });
 
-function buildIndeedUrl(keywords: string, location?: string, start = 0): string {
-  const params = new URLSearchParams({ q: keywords, start: String(start) });
-  if (location) params.set('l', location);
-  return `https://au.indeed.com/jobs?${params.toString()}`;
+function buildLinkedInUrl(keywords: string, location?: string, start = 0): string {
+  const params = new URLSearchParams({ keywords, start: String(start) });
+  if (location) params.set('location', location);
+  return `https://www.linkedin.com/jobs/search/?${params.toString()}`;
 }
 
-export function registerIndeedSearchRoute(app: FastifyInstance): void {
-  app.post('/tools/providers/indeed/search', async (request) => {
+export function registerLinkedInSearchRoute(app: FastifyInstance): void {
+  app.post('/tools/providers/linkedin/search', async (request) => {
     const parsed = SearchRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return error('bad_request', parsed.error.message) satisfies ToolResponse<never>;
@@ -34,7 +34,7 @@ export function registerIndeedSearchRoute(app: FastifyInstance): void {
     try {
       for (let pageNum = 1; pageNum <= max_pages; pageNum++) {
         const start = (pageNum - 1) * RESULTS_PER_PAGE;
-        const url = buildIndeedUrl(keywords, location, start);
+        const url = buildLinkedInUrl(keywords, location, start);
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
@@ -45,14 +45,13 @@ export function registerIndeedSearchRoute(app: FastifyInstance): void {
 
         if (!result.ok) {
           if (pageNum === 1) {
-            return drift('indeed/search', 'job cards present', result.reason);
+            return drift('linkedin/search', 'job cards present', result.reason);
           }
           break;
         }
 
         allJobs.push(...result.jobs);
 
-        // Stop early if this page is clearly the last
         if (result.jobs.length < RESULTS_PER_PAGE) break;
       }
     } finally {

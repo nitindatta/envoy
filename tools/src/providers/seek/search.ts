@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { error, ok, type ToolResponse } from '../../envelope.js';
+import { drift, error, ok, type ToolResponse } from '../../envelope.js';
 import { getOrLaunchChrome as launchChrome } from '../../browser/chrome.js';
 import { parseListing_guarded } from './parseListing.js';
 import { type ProviderJob } from '../types.js';
@@ -49,7 +49,7 @@ export function registerSeekSearchRoute(app: FastifyInstance): void {
         const result = parseListing_guarded(html);
 
         if (!result.ok) {
-          return { status: 'drift' as const, drift: result.reason };
+          return drift('seek/search', 'job cards present', result.reason);
         }
 
         allJobs.push(...result.jobs);
