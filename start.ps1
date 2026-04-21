@@ -168,6 +168,9 @@ $logsDir = Join-Path $ROOT "logs"
 if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir | Out-Null }
 
 # ── 5. Start services ─────────────────────────────────────────────────────────
+$env:EXTERNAL_APPLY_HARNESS_ENABLED = "true"
+Write-Ok "External apply harness enabled for this local run"
+
 Write-Step "Starting services..."
 
 $jobs = @()

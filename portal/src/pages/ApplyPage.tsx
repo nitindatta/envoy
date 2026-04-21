@@ -68,6 +68,7 @@ export default function ApplyPage() {
 
   const step = response?.step;
   const isExternal = step?.is_external_portal;
+  const externalApply = response?.external_apply;
   const isAuthRequired = step?.page_type === "auth_required";
   const isConfirmed = response?.status === "completed";
   const isFailed = response?.status === "failed";
@@ -138,9 +139,47 @@ export default function ApplyPage() {
       {/* External portal */}
       {phase === "gate" && isExternal && !isAuthRequired && (
         <div style={alertStyle("#fef3c7", "#d97706")}>
-          <strong>External portal detected.</strong>{" "}
+          <strong>
+            {externalApply ? "External apply harness paused." : "External portal detected."}
+          </strong>{" "}
           {step?.portal_type && <span>Portal type: {step.portal_type}. </span>}
-          This job requires manual application on the employer's own site.
+          {externalApply
+            ? "Envoy inspected or acted on the employer portal and is waiting before continuing."
+            : "This job requires manual application on the employer's own site."}
+
+          {externalApply && (
+            <div style={{ marginTop: 12, padding: "0.75rem", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, color: "#7c2d12" }}>
+              <div style={{ fontSize: 13, marginBottom: 6 }}>
+                Harness status: <strong>{externalApply.status}</strong>
+                {response?.pause_reason && <span> | {response.pause_reason}</span>}
+              </div>
+
+              {externalApply.proposed_action && (
+                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                  Last proposed action: <strong>{externalApply.proposed_action.action_type}</strong>
+                  {externalApply.proposed_action.element_id && (
+                    <span> on {externalApply.proposed_action.element_id}</span>
+                  )}
+                  <div style={{ marginTop: 4 }}>{externalApply.proposed_action.reason}</div>
+                </div>
+              )}
+
+              {externalApply.pending_user_question && (
+                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                  Question: <strong>{externalApply.pending_user_question.question}</strong>
+                  {externalApply.pending_user_question.context && (
+                    <div style={{ marginTop: 4 }}>{externalApply.pending_user_question.context}</div>
+                  )}
+                </div>
+              )}
+
+              {externalApply.risk_flags.length > 0 && (
+                <div style={{ fontSize: 12 }}>
+                  Risk flags: {externalApply.risk_flags.join(", ")}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ marginTop: 12 }}>
             {step?.page_url && (
               <a
@@ -151,6 +190,15 @@ export default function ApplyPage() {
               >
                 Open Portal ↗
               </a>
+            )}
+            {externalApply && !externalApply.submit_ready && (
+              <button
+                onClick={() => resumeMutation.mutate({ actionLabel: "Continue" })}
+                disabled={resumeMutation.isPending}
+                style={{ ...btnStyle("#2563eb"), marginRight: 12 }}
+              >
+                {resumeMutation.isPending ? "Continuing..." : "Continue Harness"}
+              </button>
             )}
             <button onClick={() => navigate("/queue")} style={btnStyle("#6b7280")}>
               Back to Queue

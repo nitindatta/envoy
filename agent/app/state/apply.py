@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.state.external_apply import ExternalApplyState
+
 
 class FieldInfo(BaseModel):
     id: str
@@ -33,12 +35,14 @@ class ApplyState(BaseModel):
     application_id: str
     workflow_run_id: str
     session_key: str = ""
+    external_start_url: str | None = None
 
     # Current step
     current_step: StepInfo | None = None
     proposed_values: dict[str, str] = Field(default_factory=dict)
     low_confidence_ids: list[str] = Field(default_factory=list)  # fields needing human review
     action_label: str = "Continue"  # action the user wants to click on resume
+    external_apply: ExternalApplyState | None = None
 
     # Accumulation
     step_history: list[dict] = Field(default_factory=list)
@@ -64,6 +68,7 @@ class ApplyStepResponse(BaseModel):
     step: StepInfo | None = None
     proposed_values: dict[str, str] = Field(default_factory=dict)
     low_confidence_ids: list[str] = Field(default_factory=list)
+    external_apply: ExternalApplyState | None = None
     submit_action_label: str = "Continue"
     step_history: list[dict] = Field(default_factory=list)
     error: str | None = None

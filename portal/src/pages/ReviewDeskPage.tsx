@@ -6,6 +6,7 @@ import {
   approveApplication,
   discardApplication,
   enqueueApply,
+  enqueueExternalHarness,
   enqueueGate,
   enqueueSubmit,
   markSubmitted,
@@ -767,6 +768,15 @@ export default function ReviewDeskPage() {
     },
   });
 
+  const externalHarnessMutation = useMutation({
+    mutationFn: ({ appId, targetUrl }: { appId: string; targetUrl?: string }) =>
+      enqueueExternalHarness(appId, targetUrl),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["applications"] });
+      queryClient.invalidateQueries({ queryKey: ["applicationDetail", selectedAppId] });
+    },
+  });
+
   const gateMutation = useMutation({
     mutationFn: ({ appId, runId, values }: { appId: string; runId: string; values: Record<string, string> }) =>
       enqueueGate(appId, runId, values),
@@ -1080,6 +1090,10 @@ export default function ReviewDeskPage() {
       if (pageType === "external_redirect") {
         const pageUrl = parsedApplyStep?.step?.page_url;
         const portalType = parsedApplyStep?.step?.portal_type;
+        const externalApply = parsedApplyStep?.external_apply ?? null;
+        const runId = parsedApplyStep?.workflow_run_id;
+        const pauseReason = parsedApplyStep?.pause_reason;
+        const startTargetUrl = detail.application.target_application_url ?? pageUrl;
         return (
           <>
             {header}
@@ -1101,14 +1115,64 @@ export default function ReviewDeskPage() {
                 )}
               </p>
               <p style={{ margin: "0 0 1rem", color: "#78350f", fontSize: 14 }}>
-                This job applies through an external portal. Open the link below, complete the application there, then click <strong>Mark as Submitted</strong>.
+                {externalApply
+                  ? "Envoy is using the external apply harness for this portal. Review the latest harness step, then continue when you are ready."
+                  : "This job applies through an external portal. Open the link below, complete the application there, then click Mark as Submitted."}
               </p>
+              {externalApply && (
+                <div style={{ margin: "0 0 1rem", padding: "0.8rem", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, color: "#7c2d12" }}>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}>
+                    Harness status: <strong>{externalApply.status}</strong>
+                    {pauseReason && <span> | {pauseReason}</span>}
+                  </div>
+                  {externalApply.proposed_action && (
+                    <div style={{ fontSize: 13, marginBottom: 6 }}>
+                      Last proposed action: <strong>{externalApply.proposed_action.action_type}</strong>
+                      {externalApply.proposed_action.element_id && (
+                        <span> on {externalApply.proposed_action.element_id}</span>
+                      )}
+                      <div style={{ marginTop: 4 }}>{externalApply.proposed_action.reason}</div>
+                    </div>
+                  )}
+                  {externalApply.pending_user_question && (
+                    <div style={{ fontSize: 13, marginBottom: 6 }}>
+                      Question: <strong>{externalApply.pending_user_question.question}</strong>
+                      {externalApply.pending_user_question.context && (
+                        <div style={{ marginTop: 4 }}>{externalApply.pending_user_question.context}</div>
+                      )}
+                    </div>
+                  )}
+                  {externalApply.risk_flags.length > 0 && (
+                    <div style={{ fontSize: 12 }}>
+                      Risk flags: {externalApply.risk_flags.join(", ")}
+                    </div>
+                  )}
+                </div>
+              )}
               {pageUrl && (
                 <a href={pageUrl} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginBottom: "1rem", fontSize: 13, color: "#1d4ed8", wordBreak: "break-all" }}>
                   {pageUrl} ↗
                 </a>
               )}
               <div style={{ display: "flex", gap: "0.75rem" }}>
+                {externalApply && !externalApply.submit_ready && runId && (
+                  <button
+                    onClick={() => gateMutation.mutate({ appId, runId, values: {} })}
+                    disabled={gateMutation.isPending}
+                    style={{ padding: "0.5rem 1.25rem", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: gateMutation.isPending ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600 }}
+                  >
+                    {gateMutation.isPending ? "Continuing..." : "Continue Harness"}
+                  </button>
+                )}
+                {!externalApply && (
+                  <button
+                    onClick={() => externalHarnessMutation.mutate({ appId, targetUrl: startTargetUrl })}
+                    disabled={externalHarnessMutation.isPending}
+                    style={{ padding: "0.5rem 1.25rem", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: externalHarnessMutation.isPending ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600 }}
+                  >
+                    {externalHarnessMutation.isPending ? "Starting..." : "Start Harness"}
+                  </button>
+                )}
                 <button
                   onClick={() => markSubmittedMutation.mutate(appId)}
                   disabled={markSubmittedMutation.isPending}

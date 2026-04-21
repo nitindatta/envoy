@@ -31,14 +31,15 @@ from app.persistence.sqlite.applications import SqliteApplicationRepository, Sql
 from app.persistence.sqlite.question_cache import SqliteQuestionCacheRepository
 from app.persistence.sqlite.workflow_runs import SqliteWorkflowRunRepository, SqliteBrowserSessionRepository
 from app.services.answer_field import propose_field_values
+from app.services.external_apply_harness import run_external_apply_step
 from app.settings import Settings
 from app.state.apply import ApplyState, StepInfo
 from app.tools.browser_client import (
     inspect_apply_step,
     fill_and_continue,
     close_session,
-    start_apply,
     launch_session,
+    open_url,
     BrowserToolError,
 )
 from app.tools.client import ToolClient, ToolServiceError
@@ -71,6 +72,29 @@ def build_apply_graph(
     question_cache: SqliteQuestionCacheRepository | None = None,
 ):
     profile = _load_profile(settings)
+
+    def _should_use_external_harness(state: ApplyState) -> bool:
+        return (
+            settings.external_apply_harness_enabled
+            and state.current_step is not None
+            and state.current_step.is_external_portal
+        )
+
+    def _status_for_external_harness(state: ApplyState) -> tuple[str, str | None]:
+        external = state.external_apply
+        if external is None:
+            return "paused", "external_apply_unknown"
+        if external.status == "failed":
+            return "failed", None
+        if external.status == "completed":
+            return "completed", None
+        if external.status == "ready_to_submit":
+            return "paused", "external_apply_ready_to_submit"
+        if external.status == "paused_for_approval":
+            return "paused", "external_apply_needs_approval"
+        if external.status == "paused_for_user":
+            return "paused", "external_apply_needs_user"
+        return "paused", "external_apply_step"
 
     # ── session recovery ───────────────────────────────────────────────────
     async def _recover_session(state: "ApplyState") -> str | None:
@@ -150,6 +174,33 @@ def build_apply_graph(
             application_id=state.application_id,
         )
 
+        if state.external_start_url:
+            try:
+                final_url = await open_url(tool_client, session_key, state.external_start_url)
+            except (BrowserToolError, ToolServiceError) as exc:
+                log.error("[launch] external_start_url failed: %s", exc)
+                return {"session_key": session_key, "status": "failed", "error": str(exc)}
+
+            await app_repo.update_target_application(
+                state.application_id,
+                target_application_url=final_url,
+                target_portal=provider,
+            )
+            log.info("[launch] external harness direct start provider=%s url=%s", provider, final_url)
+            return {
+                "session_key": session_key,
+                "status": "running",
+                "pause_reason": None,
+                "current_step": StepInfo(
+                    page_url=final_url,
+                    page_type="external_redirect",
+                    is_external_portal=True,
+                    portal_type=provider,
+                    fields=[],
+                    visible_actions=[],
+                ),
+            }
+
         try:
             env = await tool_client.call(
                 "/tools/providers/start_apply",
@@ -186,18 +237,31 @@ def build_apply_graph(
         if apply_result.get("is_external_portal"):
             log.info("[launch] external portal detected: portal_type=%s url=%s",
                      apply_result.get("portal_type"), apply_result.get("apply_url"))
+            await app_repo.update_target_application(
+                state.application_id,
+                target_application_url=apply_result.get("apply_url", ""),
+                target_portal=apply_result.get("portal_type") or provider,
+            )
+            current_step = StepInfo(
+                page_url=apply_result.get("apply_url", ""),
+                page_type="external_redirect",
+                is_external_portal=True,
+                portal_type=apply_result.get("portal_type"),
+                fields=[],
+                visible_actions=[],
+            )
+            if settings.external_apply_harness_enabled:
+                return {
+                    "session_key": session_key,
+                    "status": "running",
+                    "pause_reason": None,
+                    "current_step": current_step,
+                }
             return {
                 "session_key": session_key,
                 "status": "paused",
                 "pause_reason": "external_portal",
-                "current_step": StepInfo(
-                    page_url=apply_result.get("apply_url", ""),
-                    page_type="external_redirect",
-                    is_external_portal=True,
-                    portal_type=apply_result.get("portal_type"),
-                    fields=[],
-                    visible_actions=[],
-                ),
+                "current_step": current_step,
             }
 
         log.info("[launch] started successfully session_key=%s", session_key)
@@ -248,10 +312,82 @@ def build_apply_graph(
             return {"current_step": step, "status": "completed"}
 
         if step.page_type == "external_redirect":
+            if settings.external_apply_harness_enabled:
+                log.info("[inspect] external redirect — handing to external apply harness")
+                return {"current_step": step, "status": "running", "pause_reason": None}
             log.info("[inspect] external redirect — pausing")
             return {"current_step": step, "status": "paused", "pause_reason": "external_portal"}
 
         return {"current_step": step}
+
+    # ── external apply harness ───────────────────────────────────────────────
+    async def node_external_apply(state: ApplyState) -> dict[str, Any]:
+        if not settings.external_apply_harness_enabled:
+            log.debug("[external_apply] disabled — preserving manual external portal flow")
+            return {"status": "paused", "pause_reason": "external_portal"}
+        if state.status in ("failed", "aborted", "completed"):
+            log.debug("[external_apply] skipping — status=%s", state.status)
+            return {}
+        if not state.session_key:
+            return {"status": "failed", "error": "external apply harness has no browser session"}
+
+        previous_external = state.external_apply
+        recent_actions = previous_external.completed_actions if previous_external else []
+        log.info(
+            "[external_apply] application_id=%s session_key=%s prior_actions=%d",
+            state.application_id,
+            state.session_key,
+            len(recent_actions),
+        )
+
+        try:
+            external_state = await run_external_apply_step(
+                settings,
+                tool_client,
+                session_key=state.session_key,
+                application_id=state.application_id,
+                profile_facts=profile,
+                recent_actions=recent_actions,
+            )
+        except (BrowserToolError, ToolServiceError) as exc:
+            log.error("[external_apply] harness step failed: %s", exc)
+            return {"status": "failed", "error": str(exc)}
+
+        next_state = state.model_copy(update={"external_apply": external_state})
+        status, pause_reason = _status_for_external_harness(next_state)
+        current_url = external_state.current_url or (state.current_step.page_url if state.current_step else "")
+        current_step = (
+            state.current_step.model_copy(update={"page_url": current_url})
+            if state.current_step
+            else StepInfo(
+                page_url=current_url,
+                page_type="external_redirect",
+                is_external_portal=True,
+                fields=[],
+                visible_actions=[],
+            )
+        )
+
+        log.info(
+            "[external_apply] status=%s pause_reason=%s harness_status=%s action=%s",
+            status,
+            pause_reason,
+            external_state.status,
+            external_state.proposed_action.action_type if external_state.proposed_action else None,
+        )
+        return {
+            "external_apply": external_state,
+            "current_step": current_step,
+            "status": status,
+            "pause_reason": pause_reason,
+            "error": external_state.error if status == "failed" else None,
+        }
+
+    async def node_external_gate(state: ApplyState) -> dict[str, Any]:
+        log.info("[external_gate] resumed: status=%s action=%s", state.status, state.action_label)
+        if state.status == "aborted":
+            return {}
+        return {"status": "running", "pause_reason": None, "error": None}
 
     # ── propose ────────────────────────────────────────────────────────────
     async def node_propose(state: ApplyState) -> dict[str, Any]:
@@ -265,10 +401,13 @@ def build_apply_graph(
         log.info("[propose] application_id=%s fields=%d page_type=%s",
                  state.application_id, len(state.current_step.fields), state.current_step.page_type)
 
-        drafts = await draft_repo.list_for_application(state.application_id)
-        cover_letter = next(
-            (d.content for d in drafts if d.draft_type == "cover_letter"), ""
-        )
+        cover_letter = await draft_repo.get_cover_letter(state.application_id)
+        if not cover_letter:
+            log.warning(
+                "[propose] no cover_letter draft for application_id=%s — "
+                "textarea fills will be empty and provider validation may fail",
+                state.application_id,
+            )
 
         proposed, low_conf_ids = await propose_field_values(
             fields=state.current_step.fields,
@@ -523,15 +662,33 @@ def build_apply_graph(
         return {}
 
     # ── routing ────────────────────────────────────────────────────────────
-    def _route_after_launch(state: ApplyState) -> Literal["inspect", "finish"]:
-        if state.status in ("failed", "paused"):
+    def _route_after_launch(state: ApplyState) -> Literal["inspect", "external_apply", "finish"]:
+        if state.status == "failed":
+            return "finish"
+        if _should_use_external_harness(state):
+            return "external_apply"
+        if state.status == "paused":
             return "finish"
         return "inspect"
 
-    def _route_after_inspect(state: ApplyState) -> Literal["propose", "finish"]:
-        if state.status in ("failed", "completed", "paused"):
+    def _route_after_inspect(state: ApplyState) -> Literal["propose", "external_apply", "finish"]:
+        if state.status in ("failed", "completed"):
+            return "finish"
+        if _should_use_external_harness(state):
+            return "external_apply"
+        if state.status == "paused":
             return "finish"
         return "propose"
+
+    def _route_after_external_apply(state: ApplyState) -> Literal["external_gate", "finish"]:
+        if state.status in ("failed", "completed", "aborted"):
+            return "finish"
+        return "external_gate"
+
+    def _route_after_external_gate(state: ApplyState) -> Literal["external_apply", "finish"]:
+        if state.status == "aborted":
+            return "finish"
+        return "external_apply"
 
     def _route_after_gate(state: ApplyState) -> Literal["fill", "finish"]:
         if state.status == "aborted":
@@ -562,6 +719,8 @@ def build_apply_graph(
     graph = StateGraph(ApplyState)
     graph.add_node("launch", node_launch)
     graph.add_node("inspect", node_inspect)
+    graph.add_node("external_apply", node_external_apply)
+    graph.add_node("external_gate", node_external_gate)
     graph.add_node("propose", node_propose)
     graph.add_node("gate", node_gate)
     graph.add_node("fill", node_fill)
@@ -572,6 +731,8 @@ def build_apply_graph(
     graph.set_entry_point("launch")
     graph.add_conditional_edges("launch", _route_after_launch)
     graph.add_conditional_edges("inspect", _route_after_inspect)
+    graph.add_conditional_edges("external_apply", _route_after_external_apply)
+    graph.add_conditional_edges("external_gate", _route_after_external_gate)
     graph.add_conditional_edges("propose", _route_after_propose)
     graph.add_conditional_edges("gate", _route_after_gate)
     graph.add_conditional_edges("fill", _route_after_fill)
@@ -585,7 +746,7 @@ def build_apply_graph(
 def _make_compiled(graph_builder, checkpointer):
     return graph_builder.compile(
         checkpointer=checkpointer,
-        interrupt_before=["gate", "submit_gate"],
+        interrupt_before=["gate", "submit_gate", "external_gate"],
     )
 
 
@@ -600,6 +761,7 @@ async def run_apply(
     *,
     application_id: str,
     workflow_run_id: str,
+    external_start_url: str | None = None,
     question_cache: SqliteQuestionCacheRepository | None = None,
 ) -> ApplyState:
     """Start a new apply workflow run. Runs until first interrupt (gate) or terminal state."""
@@ -613,6 +775,7 @@ async def run_apply(
     initial = ApplyState(
         application_id=application_id,
         workflow_run_id=workflow_run_id,
+        external_start_url=external_start_url,
     )
     result = await graph.ainvoke(initial.model_dump(), config)
     return ApplyState.model_validate(result)

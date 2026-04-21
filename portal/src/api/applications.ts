@@ -30,6 +30,13 @@ export async function enqueueApply(appId: string): Promise<void> {
   });
 }
 
+export async function enqueueExternalHarness(appId: string, targetUrl?: string): Promise<void> {
+  await apiFetch<unknown>(`/applications/${appId}/external_harness`, {
+    method: "POST",
+    body: JSON.stringify({ target_url: targetUrl ?? null }),
+  });
+}
+
 export async function enqueueGate(
   appId: string,
   runId: string,

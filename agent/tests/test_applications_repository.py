@@ -91,3 +91,39 @@ async def test_update_after_prepare_persists_fit_metadata(
     assert fetched.is_suitable is False
     assert json.loads(fetched.gaps_json) == ["missing production AI evidence"]
     assert fetched.fit_score == 0.38
+
+
+async def test_update_target_application_persists_external_portal_url(
+    repos: tuple[SqliteApplicationRepository, SqliteJobRepository],
+) -> None:
+    repo, job_repo = repos
+    job_id, _ = await job_repo.upsert(
+        provider="linkedin",
+        source_url="https://linkedin.test/jobs/view/1",
+        canonical_key="linkedin:1",
+        title="AI Engineer",
+        company="Example Co",
+        location="Sydney",
+        summary="Build agents",
+        payload={},
+    )
+    app_id = await repo.create(
+        job_id=job_id,
+        source_provider="linkedin",
+        source_url="https://linkedin.test/jobs/view/1",
+    )
+
+    await repo.update_target_application(
+        app_id,
+        target_application_url="https://ats.example/apply/1",
+        target_portal="greenhouse",
+    )
+
+    fetched = await repo.get(app_id)
+    assert fetched is not None
+    assert fetched.target_application_url == "https://ats.example/apply/1"
+    assert fetched.target_portal == "greenhouse"
+
+    listed = await repo.list_all()
+    assert listed[0].target_application_url == "https://ats.example/apply/1"
+    assert listed[0].target_portal == "greenhouse"

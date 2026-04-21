@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from app.state.apply import StepInfo
+from app.state.external_apply import ActionResult, PageObservation, ProposedAction
 from app.tools.client import ToolClient, ToolServiceError
 
 log = logging.getLogger("browser_client")
@@ -62,6 +63,70 @@ async def inspect_apply_step(client: ToolClient, session_key: str):
     step = StepInfo.model_validate(data)
     log.debug("[inspect_apply_step] page_type=%s fields=%d", step.page_type, len(step.fields))
     return step, env
+
+
+async def observe_external_apply(client: ToolClient, session_key: str) -> PageObservation:
+    """Observe the current page for the external apply harness."""
+    log.debug("[observe_external_apply] session=%s", session_key)
+    env = await client.call(
+        "/tools/browser/observe_external_apply", {"session_key": session_key}
+    )
+    data = _require_ok(env, "observe_external_apply")
+    observation = PageObservation.model_validate(data)
+    log.debug(
+        "[observe_external_apply] page_type=%s fields=%d buttons=%d",
+        observation.page_type,
+        len(observation.fields),
+        len(observation.buttons),
+    )
+    return observation
+
+
+async def execute_external_apply_action(
+    client: ToolClient,
+    session_key: str,
+    action: ProposedAction,
+) -> ActionResult:
+    """Execute one narrow browser action proposed by the external apply harness."""
+    browser_actions = {
+        "fill_text",
+        "select_option",
+        "set_checkbox",
+        "set_radio",
+        "upload_file",
+        "click",
+    }
+    if action.action_type not in browser_actions:
+        raise BrowserToolError(f"action_type {action.action_type!r} is not browser-executable")
+    if not action.element_id:
+        raise BrowserToolError(f"action_type {action.action_type!r} requires element_id")
+
+    log.info(
+        "[execute_external_apply_action] session=%s action=%s element=%s",
+        session_key,
+        action.action_type,
+        action.element_id,
+    )
+    env = await client.call(
+        "/tools/browser/execute_external_apply_action",
+        {
+            "session_key": session_key,
+            "action": action.model_dump(
+                mode="json",
+                include={"action_type", "element_id", "value"},
+                exclude_none=True,
+            ),
+        },
+    )
+    data = _require_ok(env, "execute_external_apply_action")
+    result = ActionResult.model_validate(data)
+    log.debug(
+        "[execute_external_apply_action] ok=%s navigated=%s errors=%d",
+        result.ok,
+        result.navigated,
+        len(result.errors),
+    )
+    return result
 
 
 async def fill_and_continue(

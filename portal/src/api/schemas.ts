@@ -66,6 +66,8 @@ export const applicationSchema = z.object({
   job_id: z.string(),
   source_provider: z.string().optional(),
   source_url: z.string(),
+  target_portal: z.string().nullable().optional(),
+  target_application_url: z.string().nullable().optional(),
   state: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -145,12 +147,99 @@ const stepHistoryEntrySchema = z.object({
 });
 export type StepHistoryEntry = z.infer<typeof stepHistoryEntrySchema>;
 
+export const externalObservedFieldSchema = z.object({
+  element_id: z.string(),
+  label: z.string(),
+  field_type: z.string(),
+  required: z.boolean().optional().default(false),
+  current_value: z.string().nullable().optional(),
+  options: z.array(z.string()).optional().default([]),
+  nearby_text: z.string().optional().default(""),
+  disabled: z.boolean().optional().default(false),
+  visible: z.boolean().optional().default(true),
+});
+
+export const externalObservedActionSchema = z.object({
+  element_id: z.string(),
+  label: z.string(),
+  kind: z.string().optional().default("unknown"),
+  href: z.string().nullable().optional(),
+  disabled: z.boolean().optional().default(false),
+  nearby_text: z.string().optional().default(""),
+});
+
+export const externalPageObservationSchema = z.object({
+  url: z.string(),
+  title: z.string().optional().default(""),
+  page_type: z.string().optional().default("unknown"),
+  visible_text: z.string().optional().default(""),
+  fields: z.array(externalObservedFieldSchema).optional().default([]),
+  buttons: z.array(externalObservedActionSchema).optional().default([]),
+  links: z.array(externalObservedActionSchema).optional().default([]),
+  uploads: z.array(externalObservedFieldSchema).optional().default([]),
+  errors: z.array(z.string()).optional().default([]),
+  screenshot_ref: z.string().nullable().optional(),
+});
+
+export const externalProposedActionSchema = z.object({
+  action_type: z.string(),
+  element_id: z.string().nullable().optional(),
+  value: z.string().nullable().optional(),
+  question: z.string().nullable().optional(),
+  confidence: z.number(),
+  risk: z.string(),
+  reason: z.string(),
+  source: z.string().optional().default("none"),
+});
+
+export const externalActionResultSchema = z.object({
+  ok: z.boolean(),
+  action_type: z.string(),
+  element_id: z.string().nullable().optional(),
+  message: z.string().optional().default(""),
+  value_after: z.string().nullable().optional(),
+  navigated: z.boolean().optional().default(false),
+  new_url: z.string().nullable().optional(),
+  errors: z.array(z.string()).optional().default([]),
+});
+
+export const externalActionTraceSchema = z.object({
+  observation: externalPageObservationSchema,
+  proposed_action: externalProposedActionSchema,
+  policy_decision: z.string(),
+  result: externalActionResultSchema.nullable().optional(),
+});
+
+export const externalUserQuestionSchema = z.object({
+  question: z.string(),
+  context: z.string().optional().default(""),
+  suggested_answers: z.array(z.string()).optional().default([]),
+  target_element_id: z.string().nullable().optional(),
+});
+
+export const externalApplyStateSchema = z.object({
+  application_id: z.string(),
+  current_url: z.string().optional().default(""),
+  page_type: z.string().optional().default("unknown"),
+  observation: externalPageObservationSchema.nullable().optional(),
+  proposed_action: externalProposedActionSchema.nullable().optional(),
+  last_action_result: externalActionResultSchema.nullable().optional(),
+  completed_actions: z.array(externalActionTraceSchema).optional().default([]),
+  pending_user_question: externalUserQuestionSchema.nullable().optional(),
+  risk_flags: z.array(z.string()).optional().default([]),
+  submit_ready: z.boolean().optional().default(false),
+  status: z.string().optional().default("running"),
+  error: z.string().nullable().optional(),
+});
+export type ExternalApplyState = z.infer<typeof externalApplyStateSchema>;
+
 export const applyStepResponseSchema = z.object({
   workflow_run_id: z.string(),
   status: z.string(),
   step: stepInfoSchema.nullable().optional(),
   proposed_values: z.record(z.string()),
   low_confidence_ids: z.array(z.string()).optional(),
+  external_apply: externalApplyStateSchema.nullable().optional(),
   submit_action_label: z.string().optional().default("Continue"),
   step_history: z.array(stepHistoryEntrySchema).optional().default([]),
   error: z.string().nullable().optional(),

@@ -85,6 +85,19 @@ class SqliteApplicationRepository:
         )
         await self._conn.commit()
 
+    async def update_target_application(
+        self,
+        app_id: str,
+        *,
+        target_application_url: str,
+        target_portal: str | None = None,
+    ) -> None:
+        await self._conn.execute(
+            "UPDATE applications SET target_application_url=?, target_portal=?, updated_at=? WHERE id=?",
+            (target_application_url, target_portal, _now(), app_id),
+        )
+        await self._conn.commit()
+
     async def update_state(self, app_id: str, state: str) -> None:
         await self._conn.execute(
             "UPDATE applications SET state = ?, updated_at = ? WHERE id = ?",
@@ -94,7 +107,8 @@ class SqliteApplicationRepository:
 
     async def get(self, app_id: str) -> Application | None:
         async with self._conn.execute(
-            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json, "
+            "SELECT id, job_id, source_provider, source_url, target_portal, target_application_url, "
+            "state, created_at, updated_at, last_apply_step_json, "
             "is_suitable, gaps_json, fit_score "
             "FROM applications WHERE id = ?",
             (app_id,),
@@ -107,13 +121,15 @@ class SqliteApplicationRepository:
             job_id=row[1],
             source_provider=row[2],
             source_url=row[3],
-            state=row[4],
-            created_at=datetime.fromisoformat(row[5]),
-            updated_at=datetime.fromisoformat(row[6]),
-            last_apply_step_json=row[7],
-            is_suitable=bool(row[8]),
-            gaps_json=row[9] or "[]",
-            fit_score=row[10],
+            target_portal=row[4],
+            target_application_url=row[5],
+            state=row[6],
+            created_at=datetime.fromisoformat(row[7]),
+            updated_at=datetime.fromisoformat(row[8]),
+            last_apply_step_json=row[9],
+            is_suitable=bool(row[10]),
+            gaps_json=row[11] or "[]",
+            fit_score=row[12],
         )
 
     async def get_active_by_job_id(self, job_id: str) -> tuple[str, bool, list[str], float | None] | None:
@@ -137,7 +153,8 @@ class SqliteApplicationRepository:
         exclude_discarded: bool = False,
     ) -> list[Application]:
         base_select = (
-            "SELECT id, job_id, source_provider, source_url, state, created_at, updated_at, last_apply_step_json, "
+            "SELECT id, job_id, source_provider, source_url, target_portal, target_application_url, "
+            "state, created_at, updated_at, last_apply_step_json, "
             "is_suitable, gaps_json, fit_score "
             "FROM applications"
         )
@@ -160,13 +177,15 @@ class SqliteApplicationRepository:
                 job_id=r[1],
                 source_provider=r[2],
                 source_url=r[3],
-                state=r[4],
-                created_at=datetime.fromisoformat(r[5]),
-                updated_at=datetime.fromisoformat(r[6]),
-                last_apply_step_json=r[7],
-                is_suitable=bool(r[8]),
-                gaps_json=r[9] or "[]",
-                fit_score=r[10],
+                target_portal=r[4],
+                target_application_url=r[5],
+                state=r[6],
+                created_at=datetime.fromisoformat(r[7]),
+                updated_at=datetime.fromisoformat(r[8]),
+                last_apply_step_json=r[9],
+                is_suitable=bool(r[10]),
+                gaps_json=r[11] or "[]",
+                fit_score=r[12],
             )
             for r in rows
         ]

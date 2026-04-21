@@ -68,6 +68,21 @@ async def run_prepare_worker(app_state: Any) -> None:
                     await app_state.queue_repository.mark_failed(i.id, str(exc))
                     with contextlib.suppress(Exception):
                         await app_state.application_repository.update_state(i.entity_id, "failed")
+                    with contextlib.suppress(Exception):
+                        error_step = {
+                            "workflow_run_id": "",
+                            "status": "failed",
+                            "step": None,
+                            "proposed_values": {},
+                            "low_confidence_ids": [],
+                            "submit_action_label": "Continue",
+                            "step_history": [],
+                            "error": str(exc),
+                            "pause_reason": None,
+                        }
+                        await app_state.application_repository.update_apply_step(
+                            i.entity_id, _json.dumps(error_step)
+                        )
                 finally:
                     semaphore.release()
 
@@ -114,6 +129,21 @@ async def run_apply_worker(app_state: Any) -> None:
                 await app_state.queue_repository.mark_failed(item.id, str(exc))
                 with contextlib.suppress(Exception):
                     await app_state.application_repository.update_state(item.entity_id, "failed")
+                with contextlib.suppress(Exception):
+                    error_step = {
+                        "workflow_run_id": "",
+                        "status": "failed",
+                        "step": None,
+                        "proposed_values": {},
+                        "low_confidence_ids": [],
+                        "submit_action_label": "Continue",
+                        "step_history": [],
+                        "error": str(exc),
+                        "pause_reason": None,
+                    }
+                    await app_state.application_repository.update_apply_step(
+                        item.entity_id, _json.dumps(error_step)
+                    )
 
         except asyncio.CancelledError:
             log.info("[apply-worker] cancelled — shutting down")
@@ -159,6 +189,7 @@ async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
 
     try:
         if item.queue_type == "apply":
+            payload = item.payload or {}
             run_repo = app_state.workflow_run_repository
             run_id = await run_repo.create(application_id=app_id, workflow_type="apply")
             apply_state = await run_apply(
@@ -171,6 +202,7 @@ async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
                 app_state.database.connection,
                 application_id=app_id,
                 workflow_run_id=run_id,
+                external_start_url=payload.get("external_start_url"),
                 question_cache=app_state.question_cache_repository,
             )
         else:  # resume
@@ -201,7 +233,9 @@ async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
             await app_repo.update_state(app_id, "needs_review")
         elif status == "awaiting_submit":
             await app_repo.update_state(app_id, "awaiting_submit")
-        # Terminal states (applied/failed/paused) already updated by node_finish
+        elif status == "paused":
+            await app_repo.update_state(app_id, "paused")
+        # Terminal states (applied/failed) already update through node_finish
 
     except Exception as exc:
         # Persist the actual error into last_apply_step_json so the portal

@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # Worker
     worker_prepare_concurrency: int = Field(default=2, validation_alias="WORKER_PREPARE_CONCURRENCY")
 
+    # External apply harness
+    external_apply_harness_enabled: bool = Field(
+        default=True,
+        validation_alias="EXTERNAL_APPLY_HARNESS_ENABLED",
+    )
+
     # Persistence
     repo_root: Path = Field(default=Path(__file__).resolve().parents[2])
     sqlite_path: Path = Field(default=Path("../automation/agent.db"))

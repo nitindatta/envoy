@@ -13,6 +13,9 @@ import { z } from 'zod';
 import { ok, error, type ToolResponse } from '../envelope.js';
 import { createSession, getSession, closeSession } from './sessions.js';
 import { inspectStep, type StepInfo, type InspectOptions } from './inspector.js';
+import { executeExternalApplyAction } from './externalApplyActions.js';
+import { observeExternalApplyPage } from './externalApplyObserver.js';
+import { startGenericExternalApply } from './externalApplyStart.js';
 import { saveSnapshot } from './snapshot.js';
 import { getOrLaunchChrome, getProfileDir } from './chrome.js';
 import {
@@ -94,6 +97,44 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     }
 
     return ok(result.step);
+  });
+
+  app.post('/tools/browser/observe_external_apply', async (request) => {
+    const parsed = z.object({ session_key: z.string() }).safeParse(request.body);
+    if (!parsed.success) return error('bad_request', parsed.error.message);
+
+    const session = getSession(parsed.data.session_key);
+    if (!session) return sessionError(parsed.data.session_key);
+
+    const observation = await observeExternalApplyPage(session.page);
+    return ok(observation);
+  });
+
+  app.post('/tools/browser/execute_external_apply_action', async (request) => {
+    const parsed = z
+      .object({
+        session_key: z.string(),
+        action: z.object({
+          action_type: z.enum([
+            'fill_text',
+            'select_option',
+            'set_checkbox',
+            'set_radio',
+            'upload_file',
+            'click',
+          ]),
+          element_id: z.string().min(1),
+          value: z.string().nullable().optional(),
+        }),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) return error('bad_request', parsed.error.message);
+
+    const session = getSession(parsed.data.session_key);
+    if (!session) return sessionError(parsed.data.session_key);
+
+    const result = await executeExternalApplyAction(session.page, parsed.data.action);
+    return ok(result);
   });
 
   // ── fill_fields ───────────────────────────────────────────────────────────
@@ -252,16 +293,24 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
         } else if (inputType === 'file') {
           failed_ids.push(id); continue;
         } else if (tagName === 'textarea') {
-          // fill() then fire React-compatible events so controlled state updates
-          await el.fill(value);
+          // React controlled textareas track prior value via _valueTracker.
+          // Without resetting the tracker, dispatching input fires but React
+          // thinks nothing changed and skips the state update — causing
+          // form validation to treat the textarea as empty.
+          await el.scrollIntoViewIfNeeded().catch(() => {});
+          await el.focus().catch(() => {});
           await el.evaluate((node, val) => {
-            const nativeSetter = Object.getOwnPropertyDescriptor(
-              window.HTMLTextAreaElement.prototype, 'value'
+            const ta = node as HTMLTextAreaElement & { _valueTracker?: { setValue(v: string): void } };
+            const setter = Object.getOwnPropertyDescriptor(
+              window.HTMLTextAreaElement.prototype,
+              'value',
             )?.set;
-            nativeSetter?.call(node, val);
-            node.dispatchEvent(new Event('input', { bubbles: true }));
-            node.dispatchEvent(new Event('change', { bubbles: true }));
+            if (ta._valueTracker) ta._valueTracker.setValue('');
+            setter?.call(ta, val);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            ta.dispatchEvent(new Event('change', { bubbles: true }));
           }, value);
+          await el.evaluate((node) => (node as HTMLTextAreaElement).blur()).catch(() => {});
         } else {
           await el.fill(value);
         }
@@ -435,7 +484,10 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
       }
     }
 
-    return error('unsupported_provider', `start_apply not implemented for provider: ${parsed.data.provider}`);
+    try {
+      return ok(await startGenericExternalApply(session.page, parsed.data.provider, parsed.data.job_url));
+    } catch (err) {
+      return error('navigation_failed', String(err));
+    }
   });
 }
-

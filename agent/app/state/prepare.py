@@ -24,6 +24,8 @@ class Application(BaseModel):
     job_id: str
     source_provider: str
     source_url: str
+    target_portal: str | None = None
+    target_application_url: str | None = None
     state: str  # preparing | prepared | approved | discarded | submitted
     created_at: datetime
     updated_at: datetime

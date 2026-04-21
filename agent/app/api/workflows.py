@@ -164,6 +164,7 @@ def _apply_response(state) -> ApplyStepResponse:
         step=state.current_step,
         proposed_values=state.proposed_values,
         low_confidence_ids=state.low_confidence_ids,
+        external_apply=state.external_apply,
         submit_action_label=state.submit_action_label,
         step_history=state.step_history,
         error=state.error,

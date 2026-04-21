@@ -183,6 +183,58 @@ class GateResumeRequest(BaseModel):
     approved_values: dict[str, str]
 
 
+class ExternalHarnessRequest(BaseModel):
+    target_url: str | None = None
+
+
+def _external_url_from_last_step(last_apply_step_json: str | None) -> str | None:
+    if not last_apply_step_json:
+        return None
+    try:
+        step_data = json.loads(last_apply_step_json)
+    except Exception:
+        return None
+    step = step_data.get("step") or {}
+    if step.get("page_type") != "external_redirect":
+        return None
+    page_url = step.get("page_url")
+    return page_url if isinstance(page_url, str) and page_url else None
+
+
+@router.post("/applications/{app_id}/external_harness", response_model=dict)
+async def enqueue_external_harness(
+    app_id: str,
+    request: Request,
+    body: ExternalHarnessRequest | None = None,
+):
+    """Start the external apply harness from a known external portal URL."""
+    repo: SqliteApplicationRepository = request.app.state.application_repository
+    queue_repo = request.app.state.queue_repository
+
+    app = await repo.get(app_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    applyable_states = {"approved", "paused", "failed"}
+    if app.state not in applyable_states:
+        raise HTTPException(status_code=409, detail=f"cannot start external harness from state '{app.state}'")
+
+    target_url = (
+        (body.target_url if body else None)
+        or app.target_application_url
+        or _external_url_from_last_step(app.last_apply_step_json)
+        or app.source_url
+    )
+    await repo.update_target_application(
+        app_id,
+        target_application_url=target_url,
+        target_portal=app.source_provider,
+    )
+    await repo.update_state(app_id, "applying")
+    await queue_repo.enqueue("apply", app_id, {"external_start_url": target_url})
+    return {"application_id": app_id, "state": "applying", "target_url": target_url}
+
+
 @router.post("/applications/{app_id}/gate", response_model=dict)
 async def enqueue_gate_resume(app_id: str, request: Request, body: GateResumeRequest):
     """Enqueue a resume after the HITL gate (user approved field values)."""
