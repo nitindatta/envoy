@@ -127,3 +127,40 @@ async def test_update_target_application_persists_external_portal_url(
     listed = await repo.list_all()
     assert listed[0].target_application_url == "https://ats.example/apply/1"
     assert listed[0].target_portal == "greenhouse"
+
+
+async def test_reset_apply_progress_returns_application_to_approved(
+    repos: tuple[SqliteApplicationRepository, SqliteJobRepository],
+) -> None:
+    repo, job_repo = repos
+    job_id, _ = await job_repo.upsert(
+        provider="seek",
+        source_url="https://example.test/job/3",
+        canonical_key="seek:3",
+        title="Senior Data Engineer",
+        company="Example Co",
+        location="Brisbane",
+        summary="Build data platforms",
+        payload={},
+    )
+    app_id = await repo.create(
+        job_id=job_id,
+        source_provider="seek",
+        source_url="https://example.test/job/3",
+    )
+    await repo.update_target_application(
+        app_id,
+        target_application_url="https://ats.example/apply/3",
+        target_portal="pageup",
+    )
+    await repo.update_apply_step(app_id, '{"status":"paused"}')
+    await repo.update_state(app_id, "paused")
+
+    await repo.reset_apply_progress(app_id)
+
+    fetched = await repo.get(app_id)
+    assert fetched is not None
+    assert fetched.state == "approved"
+    assert fetched.target_application_url is None
+    assert fetched.target_portal is None
+    assert fetched.last_apply_step_json is None

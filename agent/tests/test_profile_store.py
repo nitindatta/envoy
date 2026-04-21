@@ -20,6 +20,7 @@ def _make_settings(repo_root: Path) -> Settings:
         repo_root=repo_root,
         sqlite_path=Path("automation/agent.db"),
         profile_path=Path("profile/profile.json"),
+        resume_path=Path("profile/resume.docx"),
         raw_profile_path=Path("profile/raw_profile.json"),
         profile_answers_path=Path("profile/profile_answers.json"),
         profile_upload_dir=Path("automation/profile_uploads"),
@@ -64,6 +65,17 @@ def test_settings_auto_discovers_existing_profile_json_when_default_missing(repo
 
     assert settings.resolved_profile_path == profile_dir / "nitin_datta_profile.json"
     assert settings.resolved_target_profile_path == profile_dir / "nitin_datta_profile.canonical.json"
+
+
+def test_settings_auto_discovers_first_docx_resume_when_default_missing(repo_root: Path) -> None:
+    profile_dir = repo_root / "profile"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "b_resume.docx").write_bytes(b"docx-b")
+    (profile_dir / "a_resume.docx").write_bytes(b"docx-a")
+
+    settings = _make_settings(repo_root)
+
+    assert settings.resolved_resume_path == profile_dir / "a_resume.docx"
 
 
 def test_refresh_profile_interview_state_uses_discovered_target_profile(repo_root: Path) -> None:

@@ -143,6 +143,36 @@ async def cancel_application(app_id: str, request: Request):
     return {"application_id": app_id, "state": "discarded", "queue_items_cancelled": cancelled}
 
 
+@router.post("/applications/{app_id}/reset", response_model=dict)
+async def reset_application(app_id: str, request: Request):
+    """Reset apply progress for testing while preserving prepared artifacts."""
+    repo: SqliteApplicationRepository = request.app.state.application_repository
+    queue_repo = request.app.state.queue_repository
+
+    app = await repo.get(app_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    resettable_states = {
+        "prepared",
+        "approved",
+        "applying",
+        "needs_review",
+        "awaiting_submit",
+        "submitting",
+        "paused",
+        "failed",
+        "applied",
+    }
+    if app.state not in resettable_states:
+        raise HTTPException(status_code=409, detail=f"cannot reset from state '{app.state}'")
+
+    cancelled = await queue_repo.cancel_for_entity(app_id)
+    await repo.reset_apply_progress(app_id, target_state="approved")
+    log.info("[reset] app_id=%s queue_items_cancelled=%d", app_id, cancelled)
+    return {"application_id": app_id, "state": "approved", "queue_items_cancelled": cancelled}
+
+
 @router.post("/applications/{app_id}/mark_submitted", response_model=dict)
 async def mark_submitted(app_id: str, request: Request):
     """Mark an application as submitted — used when the portal redirected to an external ATS."""
@@ -255,6 +285,8 @@ async def enqueue_gate_resume(app_id: str, request: Request, body: GateResumeReq
                 for f in (step.get("step", {}) or {}).get("fields", [])
             }
             for field_id, answer in body.approved_values.items():
+                if field_id.startswith("__external_apply_"):
+                    continue
                 field_meta = fields_by_id.get(field_id)
                 label = field_meta["label"] if field_meta else field_id
                 field_type = field_meta["field_type"] if field_meta else None

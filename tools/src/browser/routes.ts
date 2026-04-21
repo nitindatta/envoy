@@ -106,8 +106,21 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     const session = getSession(parsed.data.session_key);
     if (!session) return sessionError(parsed.data.session_key);
 
-    const observation = await observeExternalApplyPage(session.page);
-    return ok(observation);
+    try {
+      const observation = await observeExternalApplyPage(session.page);
+      return ok(observation);
+    } catch (err) {
+      const artifacts: Array<{ type: string; path: string }> = [];
+      const screenshotPath = await saveSnapshot(session.page, 'screenshot').catch(() => null);
+      if (screenshotPath) artifacts.push({ type: 'screenshot', path: screenshotPath });
+      const domPath = await saveSnapshot(session.page, 'dom').catch(() => null);
+      if (domPath) artifacts.push({ type: 'dom', path: domPath });
+
+      const artifactMessage = artifacts.length
+        ? ` artifacts=${artifacts.map((artifact) => `${artifact.type}:${artifact.path}`).join(', ')}`
+        : '';
+      return error('internal_error', `${String(err)}${artifactMessage}`, artifacts);
+    }
   });
 
   app.post('/tools/browser/execute_external_apply_action', async (request) => {

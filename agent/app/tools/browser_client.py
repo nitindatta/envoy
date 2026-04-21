@@ -24,7 +24,11 @@ class BrowserToolError(Exception):
 def _require_ok(env, operation: str) -> dict:
     """Unwrap envelope.data or raise BrowserToolError."""
     if env.status == "error":
-        raise BrowserToolError(f"{operation} failed: {env.error}")
+        artifact_text = ""
+        if env.artifacts:
+            paths = ", ".join(f"{artifact.type}:{artifact.path}" for artifact in env.artifacts)
+            artifact_text = f" artifacts={paths}"
+        raise BrowserToolError(f"{operation} failed: {env.error}{artifact_text}")
     if env.data is None:
         raise BrowserToolError(f"{operation} returned no data")
     return env.data  # type: ignore[return-value]

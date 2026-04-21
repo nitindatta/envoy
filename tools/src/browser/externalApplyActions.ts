@@ -58,9 +58,16 @@ export async function executeExternalApplyAction(
       await target.fill(action.value);
     } else if (action.action_type === 'select_option') {
       if (action.value == null) throw new Error('select_option requires value');
-      await target.selectOption({ label: action.value }).catch(async () => {
-        await target.selectOption({ value: action.value ?? '' });
-      });
+      const isNativeSelect = await target.evaluate(
+        (node) => (node as Element).tagName?.toLowerCase() === 'select',
+      ).catch(() => false);
+      if (isNativeSelect) {
+        await target.selectOption({ label: action.value }).catch(async () => {
+          await target.selectOption({ value: action.value ?? '' });
+        });
+      } else {
+        await selectAriaComboboxOption(page, action.element_id, action.value);
+      }
     } else if (action.action_type === 'set_checkbox') {
       if (truthyFormValue(action.value)) await target.check();
       else await target.uncheck();
@@ -103,6 +110,77 @@ export async function executeExternalApplyAction(
   }
 }
 
+function escapeCssIdent(ident: string): string {
+  return ident.replace(/([^a-zA-Z0-9_-])/g, '\\$1');
+}
+
+async function selectAriaComboboxOption(page: Page, elementId: string, value: string): Promise<void> {
+  const combobox = page.locator(elementIdSelector(elementId)).first();
+  const listboxId = await combobox.evaluate((node) => {
+    const el = node as HTMLElement;
+    return el.getAttribute('aria-owns') || el.getAttribute('aria-controls') || '';
+  });
+
+  await combobox.click();
+  await combobox.focus().catch(() => {});
+
+  const target = value.trim().toLowerCase();
+  const listboxSelector = listboxId
+    ? `#${escapeCssIdent(listboxId)}`
+    : '[role="listbox"]';
+
+  const clicked = await page.evaluate(
+    ({ sel, want }) => {
+      const listbox = document.querySelector(sel);
+      if (!listbox) return false;
+      const options = Array.from(listbox.querySelectorAll('[role="option"], li, [data-value]'));
+      const match =
+        options.find((opt) => (opt.textContent ?? '').trim().toLowerCase() === want) ||
+        options.find((opt) => (opt.textContent ?? '').trim().toLowerCase().includes(want)) ||
+        options.find((opt) => {
+          const dv = (opt as HTMLElement).getAttribute('data-value') ?? '';
+          return dv.trim().toLowerCase() === want;
+        });
+      if (!match) return false;
+      (match as HTMLElement).click();
+      return true;
+    },
+    { sel: listboxSelector, want: target },
+  ).catch(() => false);
+
+  if (clicked) return;
+
+  await combobox.fill(value).catch(async () => {
+    await combobox.click();
+    await page.keyboard.type(value);
+  });
+  await page.waitForTimeout(250);
+
+  const clickedAfterType = await page.evaluate(
+    ({ sel, want }) => {
+      const listbox = document.querySelector(sel);
+      if (!listbox) return false;
+      const options = Array.from(listbox.querySelectorAll('[role="option"], li, [data-value]'));
+      const match =
+        options.find((opt) => (opt.textContent ?? '').trim().toLowerCase() === want) ||
+        options.find((opt) => (opt.textContent ?? '').trim().toLowerCase().includes(want));
+      if (!match) return false;
+      (match as HTMLElement).click();
+      return true;
+    },
+    { sel: listboxSelector, want: target },
+  ).catch(() => false);
+
+  if (clickedAfterType) return;
+
+  await page.keyboard.press('Enter').catch(() => {});
+  await page.waitForTimeout(150);
+  const resolved = await combobox.evaluate((node) => (node as HTMLInputElement).value ?? '').catch(() => '');
+  if (!resolved.trim()) {
+    throw new Error(`No combobox option matching "${value}"`);
+  }
+}
+
 async function clickRadioOption(page: Page, elementId: string, value: string): Promise<void> {
   const radios = page.locator(`${elementIdSelector(elementId)} input[type="radio"]`);
   const count = await radios.count();
@@ -111,22 +189,54 @@ async function clickRadioOption(page: Page, elementId: string, value: string): P
     return;
   }
 
-  const targetValue = value.trim().toLowerCase();
+  const candidates = radioValueCandidates(value);
+  const entries: { radio: ReturnType<typeof radios.nth>; label: string; inputValue: string }[] = [];
   for (let index = 0; index < count; index += 1) {
     const radio = radios.nth(index);
-    const label = await radio.evaluate((node) => {
+    const { label, inputValue } = await radio.evaluate((node) => {
       const input = node as HTMLInputElement;
       const explicit = input.id ? document.querySelector(`label[for="${input.id}"]`) : null;
       const wrapping = input.closest('label');
-      return (explicit?.textContent ?? wrapping?.textContent ?? input.value ?? '').trim();
+      return {
+        label: (explicit?.textContent ?? wrapping?.textContent ?? '').trim(),
+        inputValue: (input.value ?? '').trim(),
+      };
     });
-    if (label.toLowerCase() === targetValue || label.toLowerCase().includes(targetValue)) {
-      await radio.click();
-      return;
+    entries.push({ radio, label, inputValue });
+  }
+
+  for (const candidate of candidates) {
+    for (const entry of entries) {
+      const labelLower = entry.label.toLowerCase();
+      const valueLower = entry.inputValue.toLowerCase();
+      if (labelLower === candidate || valueLower === candidate) {
+        await entry.radio.click();
+        return;
+      }
     }
   }
 
-  throw new Error(`No radio option matching "${value}"`);
+  for (const candidate of candidates) {
+    for (const entry of entries) {
+      if (entry.label.toLowerCase().includes(candidate)) {
+        await entry.radio.click();
+        return;
+      }
+    }
+  }
+
+  const available = entries.map((entry) => entry.label || entry.inputValue).filter(Boolean).join(', ');
+  throw new Error(`No radio option matching "${value}"${available ? ` (options: ${available})` : ''}`);
+}
+
+function radioValueCandidates(value: string): string[] {
+  const raw = value.trim().toLowerCase();
+  const truthy = new Set(['true', 'yes', 'y', '1', 'on', 'checked', 'agree', 'agreed', 'accept', 'accepted', 'confirm', 'confirmed', 'approved']);
+  const falsy = new Set(['false', 'no', 'n', '0', 'off', 'decline', 'declined', 'disagree', 'reject', 'rejected']);
+  const candidates = [raw];
+  if (truthy.has(raw)) candidates.push('yes', 'true', 'y', '1');
+  if (falsy.has(raw)) candidates.push('no', 'false', 'n', '0');
+  return Array.from(new Set(candidates.filter(Boolean)));
 }
 
 function actionResult(

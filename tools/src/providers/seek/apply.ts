@@ -1,16 +1,10 @@
 /**
  * SEEK-specific apply flow helpers.
  *
- * All logic that is specific to SEEK's application UI lives here:
- * confirmation page detection, login URL detection, portal type detection,
- * and the start_apply navigation sequence.
- *
- * Generic browser primitives (field extraction, fill, click) stay in browser/.
+ * Provider logic stays here; generic browser primitives live in tools/src/browser.
  */
 
 import type { Page } from 'playwright-core';
-
-// ── Page type detection ────────────────────────────────────────────────────────
 
 export function isExternalPortalUrl(url: string): boolean {
   return (
@@ -41,6 +35,7 @@ export function isLoginUrl(url: string): boolean {
 }
 
 export function detectPortalType(url: string): string {
+  if (url.includes('pageuppeople.com')) return 'pageup';
   if (url.includes('workday.com') || url.includes('myworkdayjobs.com')) return 'workday';
   if (url.includes('greenhouse.io')) return 'greenhouse';
   if (url.includes('lever.co')) return 'lever';
@@ -53,34 +48,151 @@ export function detectPortalType(url: string): string {
   return 'unknown';
 }
 
-// ── start_apply ────────────────────────────────────────────────────────────────
+type ExternalHrefCandidate = {
+  href: string;
+  label: string;
+  nearbyText?: string;
+};
+
+const SEEK_NETWORK_EXTERNAL_HOSTS = [
+  'jobsdb.com',
+  'jobstreet.com',
+  'jora.com',
+  'employer.seek.com',
+  'seekpass.co',
+  'gradconnection.com',
+  'sidekicker.com',
+  'go1.com',
+  'futurelearn.com',
+  'jobadder.com',
+];
+
+const NON_APPLY_HOSTS = [
+  'apps.apple.com',
+  'play.google.com',
+  'facebook.com',
+  'instagram.com',
+  'twitter.com',
+  'youtube.com',
+  'medium.com',
+];
+
+export function chooseBestExternalApplyHref(candidates: ExternalHrefCandidate[]): string | null {
+  const scored = candidates
+    .map((candidate) => ({ href: candidate.href, score: scoreExternalApplyHref(candidate) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return scored[0]?.href ?? null;
+}
+
+export function scoreExternalApplyHref(candidate: ExternalHrefCandidate): number {
+  let url: URL;
+  try {
+    url = new URL(candidate.href);
+  } catch {
+    return -100;
+  }
+
+  const host = url.hostname.toLowerCase();
+  const text = `${candidate.label} ${candidate.nearbyText ?? ''}`.toLowerCase();
+
+  if (host.endsWith('seek.com.au')) return -100;
+  if (NON_APPLY_HOSTS.some((blockedHost) => host.includes(blockedHost))) return -100;
+  if (SEEK_NETWORK_EXTERNAL_HOSTS.some((blockedHost) => host.includes(blockedHost))) return -50;
+
+  let score = 0;
+  if (/pageuppeople\.com|workday|myworkdayjobs|greenhouse|lever\.co|icims|successfactors|smartrecruiters|jobvite|taleo|bamboohr/.test(host)) {
+    score += 80;
+  }
+  if (/apply|application|initapplication|candidate|career|recruit|jobid/i.test(candidate.href)) {
+    score += 35;
+  }
+  if (/\b(apply|continue|proceed|application|advertiser|company site)\b/.test(text)) {
+    score += 25;
+  }
+  if (/\b(privacy|terms|security|contact|help|about|investors|blog|app store|google play|social|career advice|saved jobs)\b/.test(text)) {
+    score -= 30;
+  }
+  return score;
+}
+
+async function findBestExternalApplyHref(page: Page): Promise<string | null> {
+  const candidates = await page.evaluate(() => {
+    const cleanText = (value: string | null | undefined): string =>
+      (value ?? '').replace(/[\u2060\u200b\u200c\u200d\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+    const nearestText = (el: Element): string =>
+      cleanText(el.closest('main, article, section, form, div')?.textContent).slice(0, 300);
+
+    return Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]')).map((el) => ({
+      href: el.href,
+      label: cleanText(el.textContent ?? el.getAttribute('aria-label') ?? el.href),
+      nearbyText: nearestText(el),
+    }));
+  });
+  return chooseBestExternalApplyHref(candidates);
+}
+
+async function waitForExternalUrlToSettle(page: Page): Promise<void> {
+  let previous = '';
+  let stableCount = 0;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 4_000 }).catch(() => {});
+    await page.waitForTimeout(750);
+    const current = page.url();
+    if (current === previous) {
+      stableCount += 1;
+      if (stableCount >= 2) return;
+    } else {
+      stableCount = 0;
+      previous = current;
+    }
+  }
+}
+
+async function clickAndAdoptPopup(page: Page, click: () => Promise<unknown>): Promise<boolean> {
+  const popupPromise = page.context().waitForEvent('page', { timeout: 12_000 }).catch(() => null);
+  await click();
+  const popup = await popupPromise;
+  if (!popup) return false;
+
+  await popup.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
+  await popup.waitForLoadState('networkidle', { timeout: 8_000 }).catch(() => {});
+  await popup.waitForTimeout(750);
+  const popupUrl = popup.url();
+  if (popupUrl && popupUrl !== 'about:blank') {
+    await page.goto(popupUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await popup.close().catch(() => {});
+    await waitForExternalUrlToSettle(page);
+    return true;
+  }
+
+  await popup.close().catch(() => {});
+  return false;
+}
 
 export type StartApplyResult =
   | { status: 'ok'; apply_url: string; is_external_portal: boolean; portal_type: string | null }
   | { status: 'needs_human'; reason: string; login_url: string }
   | { status: 'error'; type: string; message: string };
 
-/**
- * Navigate to a SEEK job URL, click Apply, handle redirects, and return the
- * resulting apply URL along with external portal metadata.
- */
 export async function startApply(page: Page, jobUrl: string): Promise<StartApplyResult> {
   await page.goto(jobUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
   await page.waitForTimeout(1_500);
 
-  // Check auth before even trying to click Apply
   if (isLoginUrl(page.url())) {
     return { status: 'needs_human', reason: 'auth_required', login_url: page.url() };
   }
 
-  // Click Apply button
   try {
-    await page
-      .getByRole('link', { name: /apply/i })
-      .or(page.getByRole('button', { name: /apply/i }))
-      .first()
-      .click({ timeout: 10_000 });
+    await clickAndAdoptPopup(page, () =>
+      page
+        .getByRole('link', { name: /apply/i })
+        .or(page.getByRole('button', { name: /apply/i }))
+        .first()
+        .click({ timeout: 10_000 }),
+    );
   } catch {
     const urlNow = page.url();
     if (isLoginUrl(urlNow)) {
@@ -98,32 +210,24 @@ export async function startApply(page: Page, jobUrl: string): Promise<StartApply
     return { status: 'needs_human', reason: 'auth_required', login_url: applyUrl };
   }
 
-  // SEEK's own /apply/external intermediate page — click through to the employer's ATS
   if (applyUrl.includes('seek.com.au') && applyUrl.includes('/apply/external')) {
     try {
-      const clicked = await page
-        .getByRole('link', { name: /continue|apply|proceed|go to/i })
-        .or(page.getByRole('button', { name: /continue|apply|proceed|go to/i }))
-        .first()
-        .click({ timeout: 6_000 })
-        .then(() => true)
-        .catch(() => false);
-
-      if (!clicked) {
-        const externalHref = await page.evaluate(() => {
-          const a = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))
-            .find((el) => el.href && !el.href.includes('seek.com.au'));
-          return a ? a.href : null;
-        });
-        if (externalHref) {
-          await page.goto(externalHref, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-        }
+      const externalHref = await findBestExternalApplyHref(page);
+      if (externalHref) {
+        await page.goto(externalHref, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      } else {
+        await clickAndAdoptPopup(page, () =>
+          page
+            .getByRole('link', { name: /continue|apply|proceed|go to|company site|advertiser/i })
+            .or(page.getByRole('button', { name: /continue|apply|proceed|go to|company site|advertiser/i }))
+            .first()
+            .click({ timeout: 6_000 }),
+        ).catch(() => {});
       }
 
-      await page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
-      await page.waitForTimeout(2_000);
+      await waitForExternalUrlToSettle(page);
     } catch {
-      // Navigation failed — will be flagged as external below
+      // Navigation failed - will be flagged as external below.
     }
     applyUrl = page.url();
   }

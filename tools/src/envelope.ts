@@ -38,8 +38,12 @@ export function ok<T>(data: T, artifacts?: z.infer<typeof ArtifactSchema>[]): To
   return { status: 'ok', data, artifacts };
 }
 
-export function error(type: string, message: string): ToolResponse<never> {
-  return { status: 'error', error: { type, message } };
+export function error(
+  type: string,
+  message: string,
+  artifacts?: z.infer<typeof ArtifactSchema>[],
+): ToolResponse<never> {
+  return { status: 'error', error: { type, message }, artifacts };
 }
 
 export function drift(

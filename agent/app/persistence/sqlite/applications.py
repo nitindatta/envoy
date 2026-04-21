@@ -105,6 +105,22 @@ class SqliteApplicationRepository:
         )
         await self._conn.commit()
 
+    async def reset_apply_progress(self, app_id: str, *, target_state: str = "approved") -> None:
+        await self._conn.execute(
+            """
+            UPDATE applications
+            SET state = ?,
+                target_application_url = NULL,
+                target_portal = NULL,
+                last_apply_step_json = NULL,
+                submitted_at = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (target_state, _now(), app_id),
+        )
+        await self._conn.commit()
+
     async def get(self, app_id: str) -> Application | None:
         async with self._conn.execute(
             "SELECT id, job_id, source_provider, source_url, target_portal, target_application_url, "

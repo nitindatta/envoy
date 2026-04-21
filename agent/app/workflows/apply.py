@@ -31,7 +31,11 @@ from app.persistence.sqlite.applications import SqliteApplicationRepository, Sql
 from app.persistence.sqlite.question_cache import SqliteQuestionCacheRepository
 from app.persistence.sqlite.workflow_runs import SqliteWorkflowRunRepository, SqliteBrowserSessionRepository
 from app.services.answer_field import propose_field_values
-from app.services.external_apply_harness import run_external_apply_step
+from app.services.external_apply_harness import (
+    EXTERNAL_USER_ANSWER_KEY,
+    apply_external_user_answer,
+    run_external_apply_step,
+)
 from app.settings import Settings
 from app.state.apply import ApplyState, StepInfo
 from app.tools.browser_client import (
@@ -47,9 +51,32 @@ from app.tools.client import ToolClient, ToolServiceError
 
 def _load_profile(settings: Settings) -> dict:
     path = settings.resolved_profile_path
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    profile: dict[str, Any] = {}
+    if path.exists():
+        profile = json.loads(path.read_text(encoding="utf-8"))
+
+    target_path = settings.resolved_target_profile_path
+    if target_path.exists():
+        canonical = json.loads(target_path.read_text(encoding="utf-8"))
+        profile = _deep_merge_non_empty(profile, canonical)
+
+    resume_path = settings.resolved_resume_path
+    if resume_path is not None:
+        profile["resume_path"] = str(resume_path)
+
+    return profile
+
+
+def _deep_merge_non_empty(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_non_empty(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _is_session_lost(env) -> bool:
@@ -94,7 +121,7 @@ def build_apply_graph(
             return "paused", "external_apply_needs_approval"
         if external.status == "paused_for_user":
             return "paused", "external_apply_needs_user"
-        return "paused", "external_apply_step"
+        return "running", None
 
     # ── session recovery ───────────────────────────────────────────────────
     async def _recover_session(state: "ApplyState") -> str | None:
@@ -387,6 +414,37 @@ def build_apply_graph(
         log.info("[external_gate] resumed: status=%s action=%s", state.status, state.action_label)
         if state.status == "aborted":
             return {}
+        external_answer = state.proposed_values.get(EXTERNAL_USER_ANSWER_KEY)
+        if external_answer and state.external_apply is not None and state.session_key:
+            log.info("[external_gate] applying user answer to external target")
+            external_state = await apply_external_user_answer(
+                tool_client,
+                session_key=state.session_key,
+                external_state=state.external_apply,
+                answer=external_answer,
+            )
+            next_state = state.model_copy(update={"external_apply": external_state})
+            status, pause_reason = _status_for_external_harness(next_state)
+            current_url = external_state.current_url or (state.current_step.page_url if state.current_step else "")
+            current_step = (
+                state.current_step.model_copy(update={"page_url": current_url})
+                if state.current_step
+                else StepInfo(
+                    page_url=current_url,
+                    page_type="external_redirect",
+                    is_external_portal=True,
+                    fields=[],
+                    visible_actions=[],
+                )
+            )
+            return {
+                "external_apply": external_state,
+                "current_step": current_step,
+                "proposed_values": {},
+                "status": status,
+                "pause_reason": pause_reason,
+                "error": external_state.error if status == "failed" else None,
+            }
         return {"status": "running", "pause_reason": None, "error": None}
 
     # ── propose ────────────────────────────────────────────────────────────
@@ -680,13 +738,15 @@ def build_apply_graph(
             return "finish"
         return "propose"
 
-    def _route_after_external_apply(state: ApplyState) -> Literal["external_gate", "finish"]:
+    def _route_after_external_apply(state: ApplyState) -> Literal["external_apply", "external_gate", "finish"]:
         if state.status in ("failed", "completed", "aborted"):
             return "finish"
+        if state.status == "running":
+            return "external_apply"
         return "external_gate"
 
     def _route_after_external_gate(state: ApplyState) -> Literal["external_apply", "finish"]:
-        if state.status == "aborted":
+        if state.status in ("failed", "completed", "aborted"):
             return "finish"
         return "external_apply"
 

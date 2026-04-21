@@ -1,8 +1,7 @@
 """LLM planner for Envoy's external apply harness.
 
-The planner proposes exactly one next action from the current page observation.
-It never executes browser actions; the harness policy and Playwright tools do
-that later.
+The planner never executes browser actions; it proposes actions that the
+deterministic harness policy and Playwright tools handle later.
 """
 
 from __future__ import annotations
@@ -87,6 +86,40 @@ async def propose_external_apply_action(
         return fallback_proposed_action(observation, profile_facts or {}, approved_memory or [])
 
 
+async def propose_external_apply_actions(
+    settings: Settings,
+    *,
+    observation: PageObservation,
+    profile_facts: dict[str, Any] | None = None,
+    approved_memory: list[dict[str, Any]] | None = None,
+    recent_actions: list[ActionTrace] | None = None,
+) -> list[ProposedAction]:
+    """Return a page-level action plan for the current external apply page."""
+
+    client = _build_client(settings)
+    system, user = build_external_apply_batch_planner_messages(
+        observation=observation,
+        profile_facts=profile_facts or {},
+        approved_memory=approved_memory or [],
+        recent_actions=recent_actions or [],
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.1,
+            max_tokens=1200,
+        )
+        raw = response.choices[0].message.content or "{}"
+        return parse_planner_batch_response(raw, observation)
+    except Exception as exc:  # pragma: no cover - network/runtime dependent
+        log.warning("[propose_external_apply_actions] falling back: %s", exc)
+        return [fallback_proposed_action(observation, profile_facts or {}, approved_memory or [])]
+
+
 def build_external_apply_planner_messages(
     *,
     observation: PageObservation,
@@ -99,6 +132,10 @@ def build_external_apply_planner_messages(
         "You do not operate the browser. You propose exactly one next action as JSON. "
         "Use only observed element_id values from the page. "
         "Prefer safe, reversible actions using approved profile or memory facts. "
+        "Do not fill job-search, keyword, classification, or location search fields; those are not application answers. "
+        "For contact fields such as email, phone, name, or LinkedIn, only use exact values present in profile_facts. "
+        "For resume/CV file inputs, use profile_facts.resume_path when it is present. "
+        "Standard required privacy/data-handling consent checkboxes may be checked automatically. "
         "If the page asks for salary, visa/work-rights ambiguity, diversity, legal declarations, "
         "background checks, captcha, or anything uncertain, use ask_user. "
         "Never submit the final application; use stop_ready_to_submit when a final submit/apply button is reached. "
@@ -113,6 +150,49 @@ def build_external_apply_planner_messages(
         "profile_facts": profile_facts,
         "approved_memory": approved_memory[:12],
         "recent_actions": [_trace_for_prompt(trace) for trace in recent_actions[-6:]],
+        "allowed_actions": sorted(_ALL_ACTIONS),
+    }
+    user = json.dumps(payload, ensure_ascii=False, indent=2)
+    return system, user
+
+
+def build_external_apply_batch_planner_messages(
+    *,
+    observation: PageObservation,
+    profile_facts: dict[str, Any],
+    approved_memory: list[dict[str, Any]],
+    recent_actions: list[ActionTrace],
+) -> tuple[str, str]:
+    system = (
+        "You are Envoy's external apply planning agent. "
+        "You do not operate the browser. You propose a page plan as JSON. "
+        "Use only observed element_id values from the page. "
+        "For profile/contact pages, include every safe fill/select/check action that can be answered from "
+        "approved profile_facts or approved_memory so the harness can fill the page in one pass. "
+        "Skip fields that already have a useful current_value. "
+        "If a later field needs user judgement or missing private data, include safe earlier fill actions first, "
+        "then include one ask_user action for that field and stop the plan there. "
+        "Do not include a navigation click after fill actions; the harness will pause and re-observe after filling. "
+        "Only propose a click when there are no safe field actions left on the current page. "
+        "Do not fill job-search, keyword, classification, or location search fields; those are not application answers. "
+        "For contact fields such as email, phone, name, or LinkedIn, only use exact values present in profile_facts. "
+        "For resume/CV file inputs, use profile_facts.resume_path when it is present. "
+        "Standard required privacy/data-handling consent checkboxes may be checked automatically. "
+        "If the page asks for salary, visa/work-rights ambiguity, diversity, legal declarations, "
+        "background checks, captcha, or anything uncertain, use ask_user. "
+        "Never submit the final application; use stop_ready_to_submit when a final submit/apply button is reached. "
+        "Return ONLY valid JSON with this shape: "
+        "{\"actions\":[{\"action_type\":\"fill_text|select_option|set_checkbox|set_radio|upload_file|click|ask_user|stop_ready_to_submit|stop_failed\","
+        "\"element_id\":\"... or null\",\"value\":\"... or null\",\"question\":\"... or null\","
+        "\"confidence\":0.0,\"risk\":\"low|medium|high\",\"reason\":\"...\","
+        "\"source\":\"profile|memory|user|inferred|page|none\"}]}. "
+        "Return at most 12 actions."
+    )
+    payload = {
+        "page": _observation_for_prompt(observation),
+        "profile_facts": profile_facts,
+        "approved_memory": approved_memory[:12],
+        "recent_actions": [_trace_for_prompt(trace) for trace in recent_actions[-8:]],
         "allowed_actions": sorted(_ALL_ACTIONS),
     }
     user = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -149,6 +229,50 @@ def parse_planner_response(raw: str, observation: PageObservation) -> ProposedAc
     return proposed
 
 
+def parse_planner_batch_response(raw: str, observation: PageObservation) -> list[ProposedAction]:
+    parsed = _parse_json_object(raw)
+    if isinstance(parsed, dict):
+        raw_actions = parsed.get("actions")
+    else:
+        raw_actions = parsed
+    if not isinstance(raw_actions, list):
+        raise ValueError("batch planner response must contain an actions array")
+
+    actions: list[ProposedAction] = []
+    for item in raw_actions[:12]:
+        if not isinstance(item, dict):
+            raise ValueError("batch planner action was not a JSON object")
+        actions.append(_parse_planner_action(item, observation))
+    if not actions:
+        raise ValueError("batch planner returned no actions")
+    return actions
+
+
+def _parse_planner_action(parsed: dict[str, Any], observation: PageObservation) -> ProposedAction:
+    action_type = str(parsed.get("action_type", "")).strip()
+    if action_type not in _ALL_ACTIONS:
+        raise ValueError(f"unsupported action_type: {action_type}")
+
+    element_id = _optional_string(parsed.get("element_id"))
+    if action_type in _BROWSER_ACTIONS:
+        if not element_id:
+            raise ValueError(f"{action_type} requires element_id")
+        observed_ids = _observed_element_ids(observation)
+        if element_id not in observed_ids:
+            raise ValueError(f"unknown element_id: {element_id}")
+
+    return ProposedAction(
+        action_type=action_type,  # type: ignore[arg-type]
+        element_id=element_id,
+        value=_optional_string(parsed.get("value")),
+        question=_optional_string(parsed.get("question")),
+        confidence=_coerce_confidence(parsed.get("confidence")),
+        risk=_coerce_risk(parsed.get("risk")),
+        reason=str(parsed.get("reason", "")).strip() or "Planner proposed the next action.",
+        source=_coerce_source(parsed.get("source")),
+    )
+
+
 def fallback_proposed_action(
     observation: PageObservation,
     profile_facts: dict[str, Any],
@@ -175,6 +299,16 @@ def fallback_proposed_action(
             source="page",
         )
 
+    if _looks_like_job_search_page(observation):
+        return ProposedAction(
+            action_type="ask_user",
+            question="This looks like a job-search page rather than the employer application form. Please navigate to the actual application page, then continue.",
+            confidence=0.92,
+            risk="medium",
+            reason="The page contains job-search fields such as keyword/location instead of application form questions.",
+            source="page",
+        )
+
     for field in observation.fields:
         if field.disabled or field.current_value:
             continue
@@ -189,7 +323,7 @@ def fallback_proposed_action(
                 reason="This field may require user judgement or confirmation.",
                 source="page",
             )
-        value, source = _lookup_safe_value(field.label, profile_facts, approved_memory)
+        value, source = _lookup_safe_value(field.label, field.field_type, profile_facts, approved_memory)
         if value:
             return _action_for_field(field.element_id, field.field_type, value, source)
 
@@ -292,25 +426,51 @@ def _is_sensitive(label: str) -> bool:
     return any(word in label for word in _SENSITIVE_WORDS)
 
 
+def _looks_like_job_search_page(observation: PageObservation) -> bool:
+    page_text = " ".join([observation.url, observation.title, observation.visible_text]).lower()
+    if not re.search(r"\b(job search|perform a job search|suggestions will appear|classification list|saved searches)\b", page_text):
+        return False
+    search_labels = {"what", "where", "keyword", "keywords", "job title", "classification"}
+    return any(
+        field.field_type == "search"
+        or field.label.strip().lower() in search_labels
+        for field in observation.fields
+    )
+
+
 def _lookup_safe_value(
     label: str,
+    field_type: str,
     profile_facts: dict[str, Any],
     approved_memory: list[dict[str, Any]],
 ) -> tuple[str | None, str]:
     label_lower = label.lower()
+    if field_type == "file" or re.search(r"\b(resume|resum[eé]|cv|curriculum vitae)\b", label_lower):
+        value = _profile_path_value(profile_facts, "resume_path")
+        if value:
+            return str(value), "profile"
+
+    if "address line two" in label_lower or "address line 2" in label_lower:
+        return None, "none"
+
     mappings = [
         (("first name",), "first_name"),
         (("last name",), "last_name"),
         (("full name", "name"), "name"),
         (("email", "e-mail"), "email"),
         (("phone", "mobile", "telephone"), "phone"),
+        (("home address", "street address", "address"), "address.street"),
+        (("city", "suburb", "town"), "address.suburb"),
+        (("postcode", "post code", "zip"), "address.postcode"),
+        (("state", "province"), "address.state_code"),
+        (("country",), "address.country"),
         (("city",), "city"),
         (("location", "suburb"), "location"),
         (("linkedin",), "linkedin_url"),
     ]
     for keys, profile_key in mappings:
         if any(key in label_lower for key in keys):
-            value = profile_facts.get(profile_key)
+            value = _profile_path_value(profile_facts, profile_key)
             if value:
                 return str(value), "profile"
 
@@ -321,6 +481,15 @@ def _lookup_safe_value(
             if answer:
                 return str(answer), "memory"
     return None, "none"
+
+
+def _profile_path_value(profile_facts: dict[str, Any], path: str) -> Any:
+    current: Any = profile_facts
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
 
 
 def _action_for_field(

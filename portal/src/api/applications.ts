@@ -11,6 +11,8 @@ import {
 } from "./schemas";
 import { z } from "zod";
 
+export const EXTERNAL_USER_ANSWER_KEY = "__external_apply_user_answer";
+
 export async function fetchApplications(params?: { state?: string }): Promise<Application[]> {
   const url = params?.state ? `/applications?state=${params.state}` : "/applications";
   const raw = await apiFetch<unknown>(url);
@@ -117,6 +119,10 @@ export async function markSubmitted(appId: string): Promise<void> {
 
 export async function cancelApplication(appId: string): Promise<void> {
   await apiFetch<unknown>(`/applications/${appId}/cancel`, { method: "POST" });
+}
+
+export async function resetApplication(appId: string): Promise<void> {
+  await apiFetch<unknown>(`/applications/${appId}/reset`, { method: "POST" });
 }
 
 export async function submitApply(

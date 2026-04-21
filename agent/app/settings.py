@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     repo_root: Path = Field(default=Path(__file__).resolve().parents[2])
     sqlite_path: Path = Field(default=Path("../automation/agent.db"))
     profile_path: Path = Field(default=Path("profile/profile.json"))
+    resume_path: Path = Field(default=Path("profile/resume.docx"))
     raw_profile_path: Path = Field(default=Path("profile/raw_profile.json"))
     profile_answers_path: Path = Field(default=Path("profile/profile_answers.json"))
     profile_upload_dir: Path = Field(default=Path("automation/profile_uploads"))
@@ -80,6 +81,13 @@ class Settings(BaseSettings):
 
         return None
 
+    def _discover_resume_path(self, configured_path: Path) -> Path | None:
+        directory = configured_path.parent
+        if not directory.exists():
+            return None
+        candidates = sorted(directory.glob("*.docx"), key=lambda candidate: candidate.name.lower())
+        return candidates[0].resolve() if candidates else None
+
     @property
     def resolved_sqlite_path(self) -> Path:
         if str(self.sqlite_path) == ":memory:":
@@ -99,6 +107,17 @@ class Settings(BaseSettings):
             return configured
         discovered = self._discover_profile_path(configured)
         return discovered or configured
+
+    @property
+    def resolved_resume_path(self) -> Path | None:
+        configured = (
+            self.resume_path
+            if self.resume_path.is_absolute()
+            else (self.repo_root / self.resume_path).resolve()
+        )
+        if configured.exists():
+            return configured
+        return self._discover_resume_path(configured)
 
     @property
     def resolved_raw_profile_path(self) -> Path:

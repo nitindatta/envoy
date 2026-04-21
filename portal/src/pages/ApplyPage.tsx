@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { startApply, resumeApply } from "../api/applications";
+import { EXTERNAL_USER_ANSWER_KEY, startApply, resumeApply } from "../api/applications";
 import type { ApplyStepResponse, FieldInfo } from "../api/schemas";
 
 type Phase = "idle" | "starting" | "gate" | "done" | "error";
@@ -38,10 +38,12 @@ export default function ApplyPage() {
   const resumeMutation = useMutation({
     mutationFn: ({
       actionLabel,
+      approvedValues,
     }: {
       actionLabel: string;
+      approvedValues?: Record<string, string>;
     }) =>
-      resumeApply(response!.workflow_run_id, editedValues, actionLabel),
+      resumeApply(response!.workflow_run_id, approvedValues ?? editedValues, actionLabel),
     onSuccess: (data) => {
       setResponse(data);
       setEditedValues({ ...data.proposed_values });
@@ -69,6 +71,7 @@ export default function ApplyPage() {
   const step = response?.step;
   const isExternal = step?.is_external_portal;
   const externalApply = response?.external_apply;
+  const pendingExternalQuestion = externalApply?.pending_user_question ?? null;
   const isAuthRequired = step?.page_type === "auth_required";
   const isConfirmed = response?.status === "completed";
   const isFailed = response?.status === "failed";
@@ -191,7 +194,21 @@ export default function ApplyPage() {
                 Open Portal ↗
               </a>
             )}
-            {externalApply && !externalApply.submit_ready && (
+            {externalApply && !externalApply.submit_ready && pendingExternalQuestion?.target_element_id && (
+              <button
+                onClick={() =>
+                  resumeMutation.mutate({
+                    actionLabel: "Continue",
+                    approvedValues: { [EXTERNAL_USER_ANSWER_KEY]: "true" },
+                  })
+                }
+                disabled={resumeMutation.isPending}
+                style={{ ...btnStyle("#16a34a"), marginRight: 12 }}
+              >
+                {resumeMutation.isPending ? "Continuing..." : "I consent, continue"}
+              </button>
+            )}
+            {externalApply && !externalApply.submit_ready && !pendingExternalQuestion && (
               <button
                 onClick={() => resumeMutation.mutate({ actionLabel: "Continue" })}
                 disabled={resumeMutation.isPending}

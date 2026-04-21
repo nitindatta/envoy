@@ -5,12 +5,14 @@ import {
   fetchApplicationDetail,
   approveApplication,
   discardApplication,
+  EXTERNAL_USER_ANSWER_KEY,
   enqueueApply,
   enqueueExternalHarness,
   enqueueGate,
   enqueueSubmit,
   markSubmitted,
   cancelApplication,
+  resetApplication,
 } from "../api/applications";
 import { applyStepResponseSchema, type Application, type ApplyStepResponse } from "../api/schemas";
 
@@ -812,6 +814,15 @@ export default function ReviewDeskPage() {
     },
   });
 
+  const resetMutation = useMutation({
+    mutationFn: (appId: string) => resetApplication(appId),
+    onSuccess: () => {
+      setGateAnswers({});
+      queryClient.invalidateQueries({ queryKey: ["applications"] });
+      queryClient.invalidateQueries({ queryKey: ["applicationDetail", selectedAppId] });
+    },
+  });
+
   // ---------------------------------------------------------------------------
   // Right panel content
   // ---------------------------------------------------------------------------
@@ -847,6 +858,16 @@ export default function ReviewDeskPage() {
     const jobSourceUrl = detail.job?.source_url ?? selectedApp.job_source_url ?? null;
     const jobSummary = detail.job?.summary ?? selectedApp.job_summary ?? null;
     const fitGaps = parseJsonStringArray(detail.application.gaps_json);
+    const canResetApply = [
+      "approved",
+      "applying",
+      "needs_review",
+      "awaiting_submit",
+      "submitting",
+      "paused",
+      "failed",
+      "applied",
+    ].includes(state);
 
     // Header shared across most panels
     const header = (
@@ -860,6 +881,27 @@ export default function ReviewDeskPage() {
             <div style={{ color: "#9ca3af", fontSize: 13 }}>{selectedApp.job_location}</div>
           )}
         </div>
+        {canResetApply && (
+          <button
+            onClick={() => resetMutation.mutate(appId)}
+            disabled={resetMutation.isPending}
+            title="Clear apply progress and return this application to Approved for testing"
+            style={{
+              padding: "0.35rem 0.75rem",
+              background: "#fff",
+              color: "#92400e",
+              border: "1px solid #f59e0b",
+              borderRadius: 6,
+              cursor: resetMutation.isPending ? "not-allowed" : "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              marginLeft: "1rem",
+              flexShrink: 0,
+            }}
+          >
+            {resetMutation.isPending ? "Resetting..." : "Reset Apply"}
+          </button>
+        )}
         {jobSourceUrl && (
           <a href={jobSourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: "#2563eb", flexShrink: 0 }}>
             View on SEEK ↗
@@ -1091,6 +1133,7 @@ export default function ReviewDeskPage() {
         const pageUrl = parsedApplyStep?.step?.page_url;
         const portalType = parsedApplyStep?.step?.portal_type;
         const externalApply = parsedApplyStep?.external_apply ?? null;
+        const pendingExternalQuestion = externalApply?.pending_user_question ?? null;
         const runId = parsedApplyStep?.workflow_run_id;
         const pauseReason = parsedApplyStep?.pause_reason;
         const startTargetUrl = detail.application.target_application_url ?? pageUrl;
@@ -1155,7 +1198,22 @@ export default function ReviewDeskPage() {
                 </a>
               )}
               <div style={{ display: "flex", gap: "0.75rem" }}>
-                {externalApply && !externalApply.submit_ready && runId && (
+                {externalApply && !externalApply.submit_ready && runId && pendingExternalQuestion?.target_element_id && (
+                  <button
+                    onClick={() =>
+                      gateMutation.mutate({
+                        appId,
+                        runId,
+                        values: { [EXTERNAL_USER_ANSWER_KEY]: "true" },
+                      })
+                    }
+                    disabled={gateMutation.isPending}
+                    style={{ padding: "0.5rem 1.25rem", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, cursor: gateMutation.isPending ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600 }}
+                  >
+                    {gateMutation.isPending ? "Continuing..." : "I consent, continue"}
+                  </button>
+                )}
+                {externalApply && !externalApply.submit_ready && runId && !pendingExternalQuestion && (
                   <button
                     onClick={() => gateMutation.mutate({ appId, runId, values: {} })}
                     disabled={gateMutation.isPending}
