@@ -45,7 +45,7 @@ export default function QueuePage() {
         <h2 style={{ marginTop: 0 }}>Approved ({appsQuery.data?.length ?? 0})</h2>
         {appsQuery.isLoading && <p>Loading…</p>}
         {appsQuery.data?.length === 0 && (
-          <p style={{ color: "#6b7280", fontSize: 14 }}>
+          <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
             No approved applications yet. Prepare and approve jobs from the Review Desk.
           </p>
         )}
@@ -56,16 +56,16 @@ export default function QueuePage() {
             style={{
               padding: "0.75rem",
               marginBottom: "0.5rem",
-              border: selected?.id === app.id ? "2px solid #2563eb" : "1px solid #e5e7eb",
+              border: selected?.id === app.id ? "2px solid var(--selected-border)" : "1px solid var(--border)",
               borderRadius: 6,
               cursor: "pointer",
-              background: selected?.id === app.id ? "#eff6ff" : "#fff",
+              background: selected?.id === app.id ? "var(--selected-bg)" : "var(--surface)",
             }}
           >
             <div style={{ fontWeight: 600, fontSize: 14 }}>{app.job_title ?? "Unknown job"}</div>
-            <div style={{ color: "#6b7280", fontSize: 13 }}>{app.job_company}</div>
+            <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{app.job_company}</div>
             {app.job_location && (
-              <div style={{ color: "#9ca3af", fontSize: 12 }}>{app.job_location}</div>
+              <div style={{ color: "var(--text-subtle)", fontSize: 12 }}>{app.job_location}</div>
             )}
             <div style={{ marginTop: 4 }}>
               <span
@@ -98,7 +98,7 @@ export default function QueuePage() {
                   {selected.job_title} — {selected.job_company}
                 </h2>
                 {selected.job_location && (
-                  <p style={{ color: "#6b7280", margin: "0 0 0.5rem" }}>{selected.job_location}</p>
+                  <p style={{ color: "var(--text-muted)", margin: "0 0 0.5rem" }}>{selected.job_location}</p>
                 )}
                 {selected.job_source_url && (
                   <a href={selected.job_source_url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
@@ -145,8 +145,8 @@ export default function QueuePage() {
                 style={{
                   margin: "1rem 0",
                   padding: "0.75rem",
-                  background: "#f9fafb",
-                  border: "1px solid #e5e7eb",
+                  background: "var(--surface-subtle)",
+                  border: "1px solid var(--border)",
                   borderRadius: 6,
                   fontSize: 14,
                   color: "#374151",

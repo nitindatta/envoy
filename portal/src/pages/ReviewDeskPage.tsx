@@ -21,17 +21,17 @@ import { applyStepResponseSchema, type Application, type ApplyStepResponse } fro
 // ---------------------------------------------------------------------------
 
 const STATE_META: Record<string, { label: string; color: string }> = {
-  preparing:       { label: "Preparing...",    color: "#6b7280" },
+  preparing:       { label: "Preparing...",    color: "var(--text-muted)" },
   prepared:        { label: "Ready to review", color: "#2563eb" },
   approved:        { label: "Approved",        color: "#16a34a" },
-  applying:        { label: "Applying...",     color: "#6b7280" },
+  applying:        { label: "Applying...",     color: "var(--text-muted)" },
   needs_review:    { label: "Needs review",    color: "#d97706" },
   awaiting_submit: { label: "Ready to submit", color: "#7c3aed" },
-  submitting:      { label: "Submitting...",   color: "#6b7280" },
+  submitting:      { label: "Submitting...",   color: "var(--text-muted)" },
   applied:         { label: "Applied",         color: "#16a34a" },
   failed:          { label: "Failed",          color: "#dc2626" },
   paused:          { label: "Paused",          color: "#d97706" },
-  unsuitable:      { label: "Not a fit",       color: "#9ca3af" },
+  unsuitable:      { label: "Not a fit",       color: "var(--text-subtle)" },
 };
 
 const ACTIVE_STATES = ["preparing", "applying", "submitting"];
@@ -137,19 +137,19 @@ function FitAnalysisPanel({ evidence, gaps, fitScore }: { evidence: EvidenceItem
   return (
     <div
       style={{
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--border)",
         borderRadius: 8,
         padding: "1rem",
         marginBottom: "1rem",
-        background: "#fff",
+        background: "var(--surface)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
         <div>
-          <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6b7280" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-muted)" }}>
             Fit analysis
           </div>
-          <div style={{ marginTop: 4, fontSize: 14, color: "#374151" }}>
+          <div style={{ marginTop: 4, fontSize: 14, color: "var(--text-secondary)" }}>
             {hasExactScore ? "Fit score" : "Evidence score estimate"}: <strong>{displayScore}%</strong>
           </div>
         </div>
@@ -162,7 +162,7 @@ function FitAnalysisPanel({ evidence, gaps, fitScore }: { evidence: EvidenceItem
 
       {gaps.length > 0 && (
         <div style={{ marginTop: "0.85rem" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
             Blocking gaps
           </div>
           <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#4b5563", fontSize: 13, lineHeight: 1.5 }}>
@@ -175,14 +175,14 @@ function FitAnalysisPanel({ evidence, gaps, fitScore }: { evidence: EvidenceItem
 
       {summary.topWeak.length > 0 && (
         <div style={{ marginTop: "0.85rem" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
             How to improve the profile for this role
           </div>
           <div style={{ display: "grid", gap: "0.5rem" }}>
             {summary.topWeak.map((item) => (
-              <div key={`${item.requirement}-${item.evidence}`} style={{ border: "1px solid #f3f4f6", borderRadius: 6, padding: "0.65rem", background: "#f9fafb" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{item.requirement}</div>
-                <div style={{ marginTop: 4, fontSize: 12, color: "#6b7280" }}>
+              <div key={`${item.requirement}-${item.evidence}`} style={{ border: "1px solid var(--border-subtle)", borderRadius: 6, padding: "0.65rem", background: "var(--surface-subtle)" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{item.requirement}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-muted)" }}>
                   Current evidence: {item.evidence}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>
@@ -214,7 +214,7 @@ function MatchEvidencePanel({ evidence, showEvidence, setShowEvidence }: {
           padding: 0,
           fontSize: 14,
           fontWeight: 600,
-          color: "#374151",
+          color: "var(--text-secondary)",
           display: "flex",
           alignItems: "center",
           gap: "0.4rem",
@@ -223,14 +223,14 @@ function MatchEvidencePanel({ evidence, showEvidence, setShowEvidence }: {
       >
         <span>{showEvidence ? "▾" : "▸"}</span>
         Match Breakdown
-        <span style={{ fontWeight: 400, fontSize: 13, color: "#6b7280", marginLeft: "0.25rem" }}>
+        <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-muted)", marginLeft: "0.25rem" }}>
           ({evidence.filter((e) => e.rating === "STRONG").length} strong ·{" "}
           {evidence.filter((e) => e.rating === "MODERATE").length} moderate ·{" "}
           {evidence.filter((e) => e.rating === "WEAK").length} weak)
         </span>
       </button>
       {showEvidence && (
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
           {evidence.map((item, i) => {
             const colors = {
               STRONG:   { bg: "#f0fdf4", badge: "#16a34a", text: "#15803d" },
@@ -246,8 +246,8 @@ function MatchEvidencePanel({ evidence, showEvidence, setShowEvidence }: {
                   gap: "0.75rem",
                   alignItems: "start",
                   padding: "0.6rem 0.75rem",
-                  background: i % 2 === 0 ? "#fff" : "#f9fafb",
-                  borderTop: i > 0 ? "1px solid #f3f4f6" : "none",
+                  background: i % 2 === 0 ? "var(--surface)" : "var(--surface-subtle)",
+                  borderTop: i > 0 ? "1px solid var(--border-subtle)" : "none",
                   fontSize: 13,
                 }}
               >
@@ -266,8 +266,8 @@ function MatchEvidencePanel({ evidence, showEvidence, setShowEvidence }: {
                 >
                   {item.rating}
                 </span>
-                <span style={{ color: "#111827", lineHeight: 1.4 }}>{item.requirement}</span>
-                <span style={{ color: "#6b7280", lineHeight: 1.4 }}>{item.evidence}</span>
+                <span style={{ color: "var(--text-primary)", lineHeight: 1.4 }}>{item.requirement}</span>
+                <span style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{item.evidence}</span>
               </div>
             );
           })}
@@ -288,7 +288,7 @@ function Spinner() {
         display: "inline-block",
         width: 16,
         height: 16,
-        border: "2px solid #e5e7eb",
+        border: "2px solid var(--border)",
         borderTopColor: "#6b7280",
         borderRadius: "50%",
         animation: "spin 0.8s linear infinite",
@@ -307,7 +307,7 @@ function AppListItem({ app, selected, onClick }: {
   selected: boolean;
   onClick: () => void;
 }) {
-  const meta = STATE_META[app.state] ?? { label: app.state, color: "#6b7280" };
+  const meta = STATE_META[app.state] ?? { label: app.state, color: "var(--text-muted)" };
   const isActive = ACTIVE_STATES.includes(app.state);
   const title = app.job_title ?? "Untitled";
   const company = app.job_company ?? "";
@@ -317,10 +317,10 @@ function AppListItem({ app, selected, onClick }: {
       style={{
         padding: "0.75rem",
         marginBottom: "0.5rem",
-        border: selected ? "2px solid #2563eb" : "1px solid #e5e7eb",
+        border: selected ? "2px solid var(--selected-border)" : "1px solid var(--border)",
         borderRadius: 6,
         cursor: "pointer",
-        background: selected ? "#eff6ff" : "#fff",
+        background: selected ? "var(--selected-bg)" : "var(--surface)",
         display: "flex",
         alignItems: "flex-start",
         gap: "0.6rem",
@@ -343,17 +343,17 @@ function AppListItem({ app, selected, onClick }: {
         )}
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-primary)" }}>
           {title}
         </div>
         {company && (
-          <div style={{ color: "#6b7280", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <div style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {company}
           </div>
         )}
         <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: 2 }}>
           <span style={{ fontSize: 11, color: meta.color, fontWeight: 500 }}>{meta.label}</span>
-          <span style={{ fontSize: 11, color: "#9ca3af" }}>
+          <span style={{ fontSize: 11, color: "var(--text-subtle)" }}>
             · {isActive ? elapsedTime(app.updated_at) : relativeTime(app.updated_at)}
           </span>
         </div>
@@ -377,7 +377,7 @@ function CoverLetterSection({ text, onChange, readOnly }: {
     <div style={{ marginBottom: "1.5rem" }}>
       <button
         onClick={() => setCollapsed(!collapsed)}
-        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 14, fontWeight: 600, color: "#374151", display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}
+        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 14, fontWeight: 600, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}
       >
         <span>{collapsed ? "▸" : "▾"}</span> Cover Letter
       </button>
@@ -397,8 +397,8 @@ function CoverLetterSection({ text, onChange, readOnly }: {
             resize: "vertical",
             whiteSpace: "pre-wrap",
             boxSizing: "border-box",
-            background: readOnly ? "#f9fafb" : "#fff",
-            color: "#374151",
+            background: readOnly ? "var(--surface-subtle)" : "var(--surface)",
+            color: "var(--text-secondary)",
           }}
         />
       )}
@@ -417,14 +417,14 @@ function SpinnerPanel({ message, subtext }: { message: string; subtext?: string 
         style={{
           width: 40,
           height: 40,
-          border: "3px solid #e5e7eb",
+          border: "3px solid var(--border)",
           borderTopColor: "#6b7280",
           borderRadius: "50%",
           animation: "spin 0.8s linear infinite",
         }}
       />
-      <p style={{ fontWeight: 600, fontSize: 16, margin: 0, color: "#374151" }}>{message}</p>
-      {subtext && <p style={{ fontSize: 14, color: "#6b7280", margin: 0, maxWidth: 360 }}>{subtext}</p>}
+      <p style={{ fontWeight: 600, fontSize: 16, margin: 0, color: "var(--text-secondary)" }}>{message}</p>
+      {subtext && <p style={{ fontSize: 14, color: "var(--text-muted)", margin: 0, maxWidth: 360 }}>{subtext}</p>}
     </div>
   );
 }
@@ -475,7 +475,7 @@ function GatePanel({ appStep, gateAnswers, setGateAnswers, onSubmit, isPending, 
             {field?.options && field.options.length > 0 ? (
               <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
                 {field.options.map((opt) => (
-                  <label key={opt} style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer", fontSize: 14 }}>
+                  <label key={opt} style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer", fontSize: 14, color: "#1e3a5f" }}>
                     <input
                       type="radio"
                       name={fieldId}
@@ -499,6 +499,8 @@ function GatePanel({ appStep, gateAnswers, setGateAnswers, onSubmit, isPending, 
                   borderRadius: 4,
                   fontSize: 14,
                   boxSizing: "border-box",
+                  background: "#fff",
+                  color: "#0c4a6e",
                 }}
               />
             )}
@@ -551,7 +553,7 @@ function AwaitingSubmitPanel({ appStep, onSubmit, onCancel, isPendingSubmit, isP
     <div style={{ marginTop: "1rem" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem", marginBottom: "1rem" }}>
         <h3 style={{ margin: 0 }}>Review Filled Answers</h3>
-        <span style={{ fontSize: 12, color: "#6b7280" }}>Click a value to correct it</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Click a value to correct it</span>
       </div>
 
       {hasEdits && (
@@ -567,21 +569,21 @@ function AwaitingSubmitPanel({ appStep, onSubmit, onCancel, isPendingSubmit, isP
         if (rows.length === 0) return null;
         return (
           <div key={si} style={{ marginBottom: "1rem" }}>
-            <div style={{ padding: "0.4rem 0.75rem", background: "#f3f4f6", borderRadius: "6px 6px 0 0", fontSize: 12, color: "#6b7280", fontWeight: 500 }}>
+            <div style={{ padding: "0.4rem 0.75rem", background: "var(--surface-muted)", borderRadius: "6px 6px 0 0", fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
               Step {si + 1}
             </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, border: "1px solid #e5e7eb", borderTop: "none" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, border: "1px solid var(--border)", borderTop: "none" }}>
               <tbody>
                 {rows.map((f, ri) => {
                   const original = filled[f.id];
                   const edited = edits[f.label];
                   const isEdited = edited !== undefined && edited !== original;
                   return (
-                    <tr key={f.id} style={{ background: ri % 2 === 0 ? "#fff" : "#f9fafb" }}>
-                      <td style={{ padding: "0.5rem 0.75rem", color: "#374151", fontWeight: 500, width: "38%", borderBottom: "1px solid #f3f4f6", verticalAlign: "middle" }}>
+                    <tr key={f.id} style={{ background: ri % 2 === 0 ? "var(--surface)" : "var(--surface-subtle)" }}>
+                      <td style={{ padding: "0.5rem 0.75rem", color: "var(--text-secondary)", fontWeight: 500, width: "38%", borderBottom: "1px solid var(--border-subtle)", verticalAlign: "middle" }}>
                         {f.label}
                       </td>
-                      <td style={{ padding: "0.35rem 0.75rem", borderBottom: "1px solid #f3f4f6", verticalAlign: "top" }}>
+                      <td style={{ padding: "0.35rem 0.75rem", borderBottom: "1px solid var(--border-subtle)", verticalAlign: "top" }}>
                         {f.field_type === "textarea" ? (
                           <textarea
                             defaultValue={original}
@@ -589,8 +591,8 @@ function AwaitingSubmitPanel({ appStep, onSubmit, onCancel, isPendingSubmit, isP
                             rows={6}
                             style={{
                               width: "100%",
-                              border: isEdited ? "1px solid #f59e0b" : "1px solid #e5e7eb",
-                              background: isEdited ? "#fffbeb" : "#fff",
+                              border: isEdited ? "1px solid #f59e0b" : "1px solid var(--border)",
+                              background: isEdited ? "#fffbeb" : "var(--surface)",
                               borderRadius: 4,
                               padding: "0.35rem 0.5rem",
                               fontSize: 13,
@@ -648,7 +650,7 @@ function AwaitingSubmitPanel({ appStep, onSubmit, onCancel, isPendingSubmit, isP
         <button
           onClick={() => onCancel(appId)}
           disabled={isPendingCancel}
-          style={{ padding: "0.5rem 1.25rem", background: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: 6, cursor: isPendingCancel ? "not-allowed" : "pointer", fontSize: 14 }}
+          style={{ padding: "0.5rem 1.25rem", background: "var(--surface)", color: "var(--text-secondary)", border: "1px solid #d1d5db", borderRadius: 6, cursor: isPendingCancel ? "not-allowed" : "pointer", fontSize: 14 }}
         >
           Cancel
         </button>
@@ -830,7 +832,7 @@ export default function ReviewDeskPage() {
   function renderRightPanel() {
     if (!selectedAppId) {
       return (
-        <p style={{ color: "#6b7280", marginTop: "2rem" }}>
+        <p style={{ color: "var(--text-muted)", marginTop: "2rem" }}>
           Select an application from the list to review it.
         </p>
       );
@@ -873,12 +875,12 @@ export default function ReviewDeskPage() {
     const header = (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
         <div>
-          <h2 style={{ margin: "0 0 0.2rem", fontSize: 18 }}>
+          <h2 style={{ margin: "0 0 0.2rem", fontSize: 18, color: "var(--text-primary)" }}>
             {jobTitle}
-            {jobCompany && <span style={{ fontWeight: 400, color: "#6b7280", fontSize: 15 }}> — {jobCompany}</span>}
+            {jobCompany && <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: 15 }}> — {jobCompany}</span>}
           </h2>
           {selectedApp.job_location && (
-            <div style={{ color: "#9ca3af", fontSize: 13 }}>{selectedApp.job_location}</div>
+            <div style={{ color: "var(--text-subtle)", fontSize: 13 }}>{selectedApp.job_location}</div>
           )}
         </div>
         {canResetApply && (
@@ -888,7 +890,7 @@ export default function ReviewDeskPage() {
             title="Clear apply progress and return this application to Approved for testing"
             style={{
               padding: "0.35rem 0.75rem",
-              background: "#fff",
+              background: "var(--surface)",
               color: "#92400e",
               border: "1px solid #f59e0b",
               borderRadius: 6,
@@ -923,7 +925,7 @@ export default function ReviewDeskPage() {
             <button
               onClick={() => cancelMutation.mutate(appId)}
               disabled={cancelMutation.isPending}
-              style={{ padding: "0.4rem 1rem", background: "#fff", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: 6, cursor: cancelMutation.isPending ? "not-allowed" : "pointer", fontSize: 13 }}
+              style={{ padding: "0.4rem 1rem", background: "var(--surface)", color: "var(--text-muted)", border: "1px solid #d1d5db", borderRadius: 6, cursor: cancelMutation.isPending ? "not-allowed" : "pointer", fontSize: 13 }}
             >
               {cancelMutation.isPending ? "Cancelling…" : "Cancel"}
             </button>
@@ -947,7 +949,7 @@ export default function ReviewDeskPage() {
             <button
               onClick={() => cancelMutation.mutate(appId)}
               disabled={cancelMutation.isPending}
-              style={{ padding: "0.4rem 1rem", background: "#fff", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: 6, cursor: cancelMutation.isPending ? "not-allowed" : "pointer", fontSize: 13 }}
+              style={{ padding: "0.4rem 1rem", background: "var(--surface)", color: "var(--text-muted)", border: "1px solid #d1d5db", borderRadius: 6, cursor: cancelMutation.isPending ? "not-allowed" : "pointer", fontSize: 13 }}
             >
               {cancelMutation.isPending ? "Cancelling…" : "Cancel"}
             </button>
@@ -970,7 +972,7 @@ export default function ReviewDeskPage() {
             <button
               onClick={() => cancelMutation.mutate(appId)}
               disabled={cancelMutation.isPending}
-              style={{ padding: "0.4rem 1rem", background: "#fff", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: 6, cursor: cancelMutation.isPending ? "not-allowed" : "pointer", fontSize: 13 }}
+              style={{ padding: "0.4rem 1rem", background: "var(--surface)", color: "var(--text-muted)", border: "1px solid #d1d5db", borderRadius: 6, cursor: cancelMutation.isPending ? "not-allowed" : "pointer", fontSize: 13 }}
             >
               {cancelMutation.isPending ? "Cancelling…" : "Cancel"}
             </button>
@@ -1050,7 +1052,7 @@ export default function ReviewDeskPage() {
             disabled={discardMutation.isPending}
             style={{
               padding: "0.5rem 1.25rem",
-              background: "#fff",
+              background: "var(--surface)",
               color: "#dc2626",
               border: "1px solid #dc2626",
               borderRadius: 6,
@@ -1109,7 +1111,7 @@ export default function ReviewDeskPage() {
                 disabled={discardMutation.isPending}
                 style={{
                   padding: "0.5rem 1.25rem",
-                  background: "#fff",
+                  background: "var(--surface)",
                   color: "#dc2626",
                   border: "1px solid #dc2626",
                   borderRadius: 6,
@@ -1241,7 +1243,7 @@ export default function ReviewDeskPage() {
                 <button
                   onClick={() => discardMutation.mutate(appId)}
                   disabled={discardMutation.isPending}
-                  style={{ padding: "0.5rem 1.25rem", background: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: "pointer", fontSize: 14 }}
+                  style={{ padding: "0.5rem 1.25rem", background: "var(--surface)", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: "pointer", fontSize: 14 }}
                 >
                   Discard
                 </button>
@@ -1294,7 +1296,7 @@ export default function ReviewDeskPage() {
               <button
                 onClick={() => discardMutation.mutate(appId)}
                 disabled={discardMutation.isPending}
-                style={{ padding: "0.5rem 1.25rem", background: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: "pointer", fontSize: 14 }}
+                style={{ padding: "0.5rem 1.25rem", background: "var(--surface)", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: "pointer", fontSize: 14 }}
               >
                 Discard
               </button>
@@ -1382,7 +1384,7 @@ export default function ReviewDeskPage() {
               <button
                 onClick={() => discardMutation.mutate(appId)}
                 disabled={discardMutation.isPending}
-                style={{ padding: "0.5rem 1.25rem", background: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: discardMutation.isPending ? "not-allowed" : "pointer", fontSize: 14 }}
+                style={{ padding: "0.5rem 1.25rem", background: "var(--surface)", color: "#dc2626", border: "1px solid #dc2626", borderRadius: 6, cursor: discardMutation.isPending ? "not-allowed" : "pointer", fontSize: 14 }}
               >
                 {discardMutation.isPending ? "Discarding…" : "Discard"}
               </button>
@@ -1436,11 +1438,11 @@ export default function ReviewDeskPage() {
                 <div
                   style={{
                     padding: "0.75rem",
-                    background: "#f9fafb",
-                    border: "1px solid #e5e7eb",
+                    background: "var(--surface-subtle)",
+                    border: "1px solid var(--border)",
                     borderRadius: 6,
                     fontSize: 13,
-                    color: "#374151",
+                    color: "var(--text-secondary)",
                     lineHeight: 1.7,
                     whiteSpace: "pre-wrap",
                     overflowY: "auto",
@@ -1499,7 +1501,7 @@ export default function ReviewDeskPage() {
     return (
       <>
         {header}
-        <p style={{ color: "#6b7280", fontSize: 14 }}>
+        <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
           Application is in state: <strong>{state}</strong>. No action panel available.
         </p>
       </>
@@ -1514,16 +1516,16 @@ export default function ReviewDeskPage() {
     <div style={{ display: "flex", gap: "1.5rem", padding: "1.5rem" }}>
       {/* Left panel */}
       <div style={{ width: 280, flexShrink: 0 }}>
-        <h2 style={{ marginTop: 0, marginBottom: "1rem" }}>Review Desk</h2>
+        <h2 style={{ marginTop: 0, marginBottom: "1rem", color: "var(--text-primary)" }}>Review Desk</h2>
 
-        {appsQuery.isLoading && <p style={{ color: "#6b7280", fontSize: 13 }}>Loading…</p>}
+        {appsQuery.isLoading && <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>}
         {appsQuery.isError && (
           <p style={{ color: "#dc2626", fontSize: 13 }}>
             Failed to load applications.
           </p>
         )}
         {appsQuery.isSuccess && sortedApps.length === 0 && (
-          <p style={{ color: "#6b7280", fontSize: 13 }}>
+          <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
             No applications yet. Queue some jobs from the Jobs page.
           </p>
         )}

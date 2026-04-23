@@ -79,7 +79,7 @@ export default function ApplyPage() {
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <h1 style={{ marginBottom: "0.5rem" }}>Apply</h1>
-      <p style={{ color: "#6b7280", fontSize: 14, marginBottom: "1.5rem" }}>
+      <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: "1.5rem" }}>
         Application ID: {applicationId}
       </p>
 
@@ -95,7 +95,7 @@ export default function ApplyPage() {
 
       {/* Starting spinner */}
       {phase === "starting" && (
-        <p style={{ color: "#6b7280" }}>Opening browser and navigating to application…</p>
+        <p style={{ color: "var(--text-muted)" }}>Opening browser and navigating to application…</p>
       )}
 
       {/* Done */}
@@ -229,14 +229,14 @@ export default function ApplyPage() {
         <div>
           {/* Step progress */}
           {step.step_index != null && (
-            <p style={{ color: "#6b7280", fontSize: 13, marginBottom: "0.75rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: "0.75rem" }}>
               Step {step.step_index}{step.total_steps_estimate ? ` of ${step.total_steps_estimate}` : ""}
             </p>
           )}
 
           {/* Fields */}
           {step.fields.length === 0 ? (
-            <p style={{ color: "#6b7280", fontSize: 14 }}>No fields detected on this step.</p>
+            <p style={{ color: "var(--text-muted)", fontSize: 14 }}>No fields detected on this step.</p>
           ) : (
             <>
               {response?.low_confidence_ids && response.low_confidence_ids.length > 0 && (

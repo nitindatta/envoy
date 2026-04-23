@@ -157,7 +157,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 function SectionHeader({ title }: { title: string }) {
   return (
-    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
       {title}
     </p>
   );
@@ -257,8 +257,8 @@ function mergeInterviewDraftIntoProfile(
 function RawProfilePreview({ rawProfile }: { rawProfile: RawProfile }) {
   return (
     <div className="space-y-3">
-      <div className="rounded border bg-slate-50 p-3">
-        <p className="text-sm font-medium text-slate-800">
+      <div className="rounded border dark:border-slate-600 bg-slate-50 dark:bg-slate-700 p-3">
+        <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
           {rawProfile.identity.name || "Unnamed candidate"}
         </p>
         <p className="text-xs text-slate-500 mt-0.5">
@@ -267,24 +267,24 @@ function RawProfilePreview({ rawProfile }: { rawProfile: RawProfile }) {
             .join(" · ")}
         </p>
         {rawProfile.summary && (
-          <p className="mt-2 text-xs text-slate-600 leading-5">{rawProfile.summary}</p>
+          <p className="mt-2 text-xs text-slate-600 dark:text-slate-300 leading-5">{rawProfile.summary}</p>
         )}
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded border bg-white p-3">
+        <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 p-3">
           <SectionHeader title="Experience" />
           <div className="mt-2 space-y-3">
             {rawProfile.experience.slice(0, 3).map((item) => (
               <div key={item.id}>
-                <p className="text-sm font-medium text-slate-800">
+                <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
                   {[item.title, item.company].filter(Boolean).join(" at ") || "Experience item"}
                 </p>
                 {item.period_raw && (
                   <p className="text-[11px] text-slate-400 mt-0.5">{item.period_raw}</p>
                 )}
                 {item.bullets.length > 0 && (
-                  <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600">
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600 dark:text-slate-300">
                     {item.bullets.slice(0, 3).map((bullet, index) => (
                       <li key={`${item.id}-${index}`}>{bullet.text}</li>
                     ))}
@@ -293,7 +293,7 @@ function RawProfilePreview({ rawProfile }: { rawProfile: RawProfile }) {
               </div>
             ))}
             {rawProfile.experience.length === 0 && (
-              <p className="text-xs text-slate-400">No experience entries extracted yet.</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">No experience entries extracted yet.</p>
             )}
           </div>
         </div>
@@ -303,12 +303,12 @@ function RawProfilePreview({ rawProfile }: { rawProfile: RawProfile }) {
             <SectionHeader title="Skills" />
             <div className="mt-2 flex flex-wrap gap-1.5">
               {rawProfile.skills.slice(0, 12).map((skill) => (
-                <span key={skill} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                <span key={skill} className="rounded-full bg-slate-100 dark:bg-slate-600 px-2 py-0.5 text-[11px] text-slate-600 dark:text-slate-200">
                   {skill}
                 </span>
               ))}
               {rawProfile.skills.length === 0 && (
-                <p className="text-xs text-slate-400">No skills section extracted yet.</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">No skills section extracted yet.</p>
               )}
             </div>
           </div>
@@ -318,14 +318,14 @@ function RawProfilePreview({ rawProfile }: { rawProfile: RawProfile }) {
             <div className="mt-2 space-y-2">
               {rawProfile.projects.slice(0, 2).map((project) => (
                 <div key={project.id}>
-                  <p className="text-sm font-medium text-slate-800">{project.name || "Project"}</p>
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{project.name || "Project"}</p>
                   {project.summary && (
-                    <p className="mt-1 text-xs text-slate-600">{project.summary}</p>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{project.summary}</p>
                   )}
                 </div>
               ))}
               {rawProfile.projects.length === 0 && (
-                <p className="text-xs text-slate-400">No project entries extracted yet.</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">No project entries extracted yet.</p>
               )}
             </div>
           </div>
@@ -750,7 +750,7 @@ export default function SetupPage() {
     <section className="space-y-6 max-w-5xl">
       <header>
         <h1 className="text-2xl font-semibold">Setup</h1>
-        <p className="text-slate-500 text-sm mt-1">
+        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
           Upload a source profile, review the parsed raw profile, and then shape the STAR-style target profile the agent should eventually write from.
         </p>
       </header>
@@ -759,7 +759,7 @@ export default function SetupPage() {
 
       {status && (
         <>
-          <div className="rounded-lg border bg-white divide-y">
+          <div className="rounded-lg border dark:border-slate-700 bg-white dark:bg-slate-800 divide-y dark:divide-slate-700">
             <div className="p-4 space-y-4">
               <div className="flex items-center gap-2">
                 <span className={`text-base font-semibold ${hasProfileSource ? "text-green-600" : "text-slate-800"}`}>
@@ -770,7 +770,7 @@ export default function SetupPage() {
                 )}
               </div>
 
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 Upload a resume or profile file in <strong>PDF</strong>, <strong>DOCX</strong>, or <strong>JSON</strong>. Envoy stores the original file, extracts a raw profile artifact, and uses that to build the canonical target profile.
               </p>
 
@@ -796,16 +796,16 @@ export default function SetupPage() {
               </div>
 
               <div className="grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
-                <div className="rounded border bg-white px-3 py-2">
+                <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                   Raw profile path: <span className="font-mono text-slate-700">{status.raw_profile_path}</span>
                 </div>
-                <div className="rounded border bg-white px-3 py-2">
+                <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                   Latest upload: <span className="font-mono text-slate-700">{status.latest_uploaded_filename || "None yet"}</span>
                 </div>
               </div>
 
               {status.profile_json_exists && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-400 dark:text-slate-500">
                   Legacy JSON profile still exists at <span className="font-mono">{status.profile_json_path}</span>. Until later phases switch generation to canonical profile only, the main application workflows still read that configured JSON profile.
                 </p>
               )}
@@ -832,11 +832,11 @@ export default function SetupPage() {
                 )}
               </div>
 
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 This is the non-canonical parsed profile derived from your upload. It stays close to the source material so we can preserve traceability before turning it into STAR-style evidence.
               </p>
 
-              {rawProfileQuery.isLoading && <p className="text-xs text-slate-400">Loading raw profile…</p>}
+              {rawProfileQuery.isLoading && <p className="text-xs text-slate-400 dark:text-slate-500">Loading raw profile…</p>}
 
               {rawProfile?.raw_profile ? (
                 <>
@@ -844,7 +844,7 @@ export default function SetupPage() {
                   <RawProfilePreview rawProfile={rawProfile.raw_profile} />
                 </>
               ) : (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-400 dark:text-slate-500">
                   Upload a source profile to generate a raw profile artifact.
                 </p>
               )}
@@ -860,18 +860,18 @@ export default function SetupPage() {
                 )}
               </div>
 
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 This is the canonical STAR-style profile draft the agent will eventually write from. It is generated from the raw profile when available, otherwise from the existing JSON profile.
               </p>
 
               {!hasProfileSource && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-400 dark:text-slate-500">
                   Upload a source profile first, or keep using the existing JSON profile, then Envoy can generate a canonical target profile draft.
                 </p>
               )}
 
               {hasProfileSource && targetQuery.isLoading && (
-                <p className="text-xs text-slate-400">Generating target profile draft…</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">Generating target profile draft…</p>
               )}
 
               {hasProfileSource && target?.target_profile && (
@@ -880,10 +880,10 @@ export default function SetupPage() {
                     {status.target_profile_exists ? status.target_profile_path : `Draft path: ${target.target_profile_path}`}
                   </p>
 
-                  <div className="rounded border bg-slate-50 p-3">
+                  <div className="rounded border dark:border-slate-600 bg-slate-50 dark:bg-slate-700 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-medium text-slate-800">
+                        <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
                           {editableTargetProfile?.name || target.target_profile.name || "Unnamed profile"}
                         </p>
                         {(editableTargetProfile?.headline || target.target_profile.headline) && (
@@ -906,17 +906,17 @@ export default function SetupPage() {
                         </button>
                       )}
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                      <div className="rounded border bg-white px-2 py-1.5">
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-300">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
                         Evidence items: {(editableTargetProfile || target.target_profile).evidence_items.length}
                       </div>
-                      <div className="rounded border bg-white px-2 py-1.5">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
                         Voice samples: {(editableTargetProfile || target.target_profile).voice_samples.length}
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded border border-indigo-200 bg-indigo-50 p-3 space-y-3">
+                  <div className="rounded border border-indigo-200 dark:border-indigo-900 bg-indigo-50 dark:bg-indigo-950/30 p-3 space-y-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <SectionHeader title="Overall Status" />
@@ -932,28 +932,28 @@ export default function SetupPage() {
                     </div>
 
                     <div className="grid gap-2 md:grid-cols-4 text-xs text-slate-700">
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Evidence items: <span className="font-medium">{editableEvidenceItems.length}</span>
                       </div>
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Fully filled STAR cards: <span className="font-medium">{fullyFilledItemsCount}</span>
                       </div>
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Approved items: <span className="font-medium">{approvedItemsCount}</span>
                       </div>
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Combined profile score: <span className="font-medium">{formatPercentScore(activeInterview?.overall_profile_score)}</span>
                       </div>
                     </div>
 
                     <div className="grid gap-2 md:grid-cols-3 text-xs text-slate-700">
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Field completeness: <span className="font-medium">{profileCompletionPercent}%</span>
                       </div>
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Answer quality: <span className="font-medium">{formatPercentScore(activeInterview?.overall_answer_quality_score)}</span>
                       </div>
-                      <div className="rounded border bg-white px-3 py-2">
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Voice profile: <span className="font-medium">{profileForView?.voice_profile.confidence || "draft"}</span>
                       </div>
                     </div>
@@ -973,7 +973,7 @@ export default function SetupPage() {
                       </div>
                     )}
 
-                    <div className="rounded border bg-white p-3">
+                    <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 p-3">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Best Next Actions
                       </p>
@@ -997,7 +997,7 @@ export default function SetupPage() {
                     </div>
                   )}
 
-                  <div className="space-y-3 rounded border border-sky-200 bg-sky-50 p-3">
+                  <div className="space-y-3 rounded border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/30 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <SectionHeader title="Profile Interview" />
@@ -1044,7 +1044,7 @@ export default function SetupPage() {
                       {selectedEvidenceItem && (
                         <div className="rounded border border-sky-200 bg-white p-3 space-y-3">
                           <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-medium text-slate-800">
+                            <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
                               {selectedEvidenceItem.source}
                               {selectedEvidenceItem.role_title ? ` · ${selectedEvidenceItem.role_title}` : ""}
                             </p>
@@ -1074,7 +1074,7 @@ export default function SetupPage() {
                           </p>
                           <div className="flex flex-wrap gap-1.5">
                             {selectedEvidenceItem.skills.slice(0, 6).map((skill) => (
-                              <span key={skill} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                              <span key={skill} className="rounded-full bg-slate-100 dark:bg-slate-600 px-2 py-0.5 text-[11px] text-slate-600 dark:text-slate-200">
                                 {skill}
                               </span>
                             ))}
@@ -1090,7 +1090,7 @@ export default function SetupPage() {
                                   updateEvidenceField(selectedEvidenceItem.id, "situation", event.target.value)
                                 }
                                 rows={4}
-                                className="mt-1 w-full rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                                className="mt-1 w-full rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                               />
                             </label>
                             <label className="block">
@@ -1103,7 +1103,7 @@ export default function SetupPage() {
                                   updateEvidenceField(selectedEvidenceItem.id, "task", event.target.value)
                                 }
                                 rows={4}
-                                className="mt-1 w-full rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                                className="mt-1 w-full rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                               />
                             </label>
                             <label className="block">
@@ -1116,7 +1116,7 @@ export default function SetupPage() {
                                   updateEvidenceField(selectedEvidenceItem.id, "action", event.target.value)
                                 }
                                 rows={4}
-                                className="mt-1 w-full rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                                className="mt-1 w-full rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                               />
                             </label>
                             <label className="block">
@@ -1129,7 +1129,7 @@ export default function SetupPage() {
                                   updateEvidenceField(selectedEvidenceItem.id, "outcome", event.target.value)
                                 }
                                 rows={4}
-                                className="mt-1 w-full rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                                className="mt-1 w-full rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                               />
                             </label>
                           </div>
@@ -1143,7 +1143,7 @@ export default function SetupPage() {
                                 updateEvidenceField(selectedEvidenceItem.id, "metrics", event.target.value)
                               }
                               rows={3}
-                              className="mt-1 w-full rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                              className="mt-1 w-full rounded border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                               placeholder="One metric or proof point per line"
                             />
                           </label>
@@ -1189,7 +1189,7 @@ export default function SetupPage() {
                                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                                   Why Envoy suggested this
                                 </p>
-                                <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600">
+                                <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600 dark:text-slate-300">
                                   {activeInterview.current_prompt.source_basis.map((basis) => (
                                     <li key={basis}>{basis}</li>
                                   ))}
@@ -1230,7 +1230,7 @@ export default function SetupPage() {
                               value={interviewAnswer}
                               onChange={(event) => setInterviewAnswer(event.target.value)}
                               rows={4}
-                              className="mt-3 w-full rounded border border-sky-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                              className="mt-3 w-full rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                               placeholder="Envoy will prefill a draft answer here when it has enough context"
                             />
                             <div className="mt-3 flex items-center gap-3">
@@ -1451,8 +1451,8 @@ export default function SetupPage() {
 
               <div className="space-y-2">
                 {status.providers.map((provider) => (
-                  <div key={provider} className="flex items-center justify-between gap-3 p-3 rounded border bg-slate-50">
-                    <span className="text-sm font-medium text-slate-700">
+                  <div key={provider} className="flex items-center justify-between gap-3 p-3 rounded border dark:border-slate-600 bg-slate-50 dark:bg-slate-700">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
                       {PROVIDER_LABELS[provider] ?? provider}
                     </span>
                     <button

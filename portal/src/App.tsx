@@ -8,6 +8,7 @@ import HistoryPage from "./pages/HistoryPage";
 import SettingsPage from "./pages/SettingsPage";
 import DriftPage from "./pages/DriftPage";
 import SetupPage from "./pages/SetupPage";
+import { useTheme } from "./lib/theme";
 
 const navItems = [
   { to: "/", label: "Jobs", end: true },
@@ -19,23 +20,41 @@ const navItems = [
   { to: "/setup", label: "Setup" },
 ];
 
+function ThemeToggle() {
+  const { theme, toggle } = useTheme();
+  return (
+    <button
+      onClick={toggle}
+      className="ml-auto text-xs font-medium px-2.5 py-1 rounded border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:border-slate-400 dark:hover:border-slate-400 transition-colors"
+      title="Toggle dark mode"
+    >
+      {theme === "dark" ? "Light" : "Dark"}
+    </button>
+  );
+}
+
 export default function App() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b bg-white">
-        <nav className="mx-auto flex max-w-6xl gap-4 px-6 py-4">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+      <header className="border-b bg-white dark:bg-slate-800 dark:border-slate-700">
+        <nav className="mx-auto flex max-w-6xl items-center gap-4 px-6 py-4">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `text-sm font-medium ${isActive ? "text-blue-600" : "text-slate-600 hover:text-slate-900"}`
+                `text-sm font-medium ${
+                  isActive
+                    ? "text-blue-600 dark:text-blue-400"
+                    : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
+                }`
               }
             >
               {item.label}
             </NavLink>
           ))}
+          <ThemeToggle />
         </nav>
       </header>
       <main className="mx-auto max-w-6xl px-6 py-8">

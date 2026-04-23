@@ -10,7 +10,7 @@ export default defineConfig({
   server: {
     port: 5200,
     proxy: {
-      "/api": "http://127.0.0.1:8005",
+      "/api": "http://127.0.0.1:8100",
     },
   },
   test: {
