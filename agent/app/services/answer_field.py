@@ -146,10 +146,22 @@ def _lookup_from_profile(field: FieldInfo, profile: dict) -> str | None:
 async def _lookup_from_cache(
     field: FieldInfo, cache: SqliteQuestionCacheRepository | None
 ) -> str | None:
-    """Look up a previously human-approved answer by token overlap."""
+    """Look up a previously approved answer by token overlap."""
     if cache is None:
         return None
     return await cache.find(field.label)
+
+
+async def _save_to_cache(
+    field: FieldInfo,
+    answer: str,
+    cache: SqliteQuestionCacheRepository | None,
+    *,
+    source: str,
+) -> None:
+    if cache is None or not field.label:
+        return
+    await cache.save(field.label, answer, field_type=field.field_type, source=source)
 
 
 # ── 3. LLM call ────────────────────────────────────────────────────────────
@@ -301,7 +313,7 @@ async def propose_field_values(
 
         # 1. Profile lookup
         value = _lookup_from_profile(field, profile)
-        if value:
+        if value is not None:
             proposed[field.id] = value
             log.debug("[field:%s] label=%r → profile value=%r", field.id, field.label, value)
             continue
@@ -312,7 +324,7 @@ async def propose_field_values(
 
         # 2. Cache lookup
         value = await _lookup_from_cache(field, question_cache)
-        if value:
+        if value is not None:
             proposed[field.id] = value
             log.debug("[field:%s] label=%r → cache value=%r", field.id, field.label, value)
             continue
@@ -328,6 +340,8 @@ async def propose_field_values(
         # 3. LLM — pass the profile hint so it doesn't guess freely
         value, confidence = await _resolve_via_llm(field, profile, settings, cover_letter, profile_hint=profile_hint)
         proposed[field.id] = value
+        if confidence >= LOW_CONFIDENCE_THRESHOLD:
+            await _save_to_cache(field, value, question_cache, source="llm")
         if confidence < LOW_CONFIDENCE_THRESHOLD:
             low_confidence.append(field.id)
             log.info("[field:%s] label=%r → LLM LOW_CONF=%.2f value=%r", field.id, field.label, confidence, value)

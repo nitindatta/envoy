@@ -290,7 +290,7 @@ async def enqueue_gate_resume(app_id: str, request: Request, body: GateResumeReq
                 field_meta = fields_by_id.get(field_id)
                 label = field_meta["label"] if field_meta else field_id
                 field_type = field_meta["field_type"] if field_meta else None
-                if label and answer:
+                if label and answer is not None:
                     await cache_repo.save(label, answer, field_type=field_type)
                     log.info("[gate] cached answer for label=%r answer=%r", label, answer)
         except Exception:
@@ -335,7 +335,7 @@ async def enqueue_submit(app_id: str, request: Request, body: SubmitRequest):
                     if f.get("label"):
                         field_types[f["label"]] = f.get("field_type", "text")
             for label, answer in body.corrected_values.items():
-                if label and answer:
+                if label and answer is not None:
                     await cache_repo.save(label, answer, field_type=field_types.get(label))
                     log.info("[submit] cached corrected answer label=%r answer=%r", label, answer)
         except Exception:

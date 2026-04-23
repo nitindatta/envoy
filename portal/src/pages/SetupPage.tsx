@@ -298,7 +298,7 @@ function RawProfilePreview({ rawProfile }: { rawProfile: RawProfile }) {
           </div>
         </div>
 
-        <div className="rounded border bg-white p-3 space-y-3">
+        <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 p-3 space-y-3">
           <div>
             <SectionHeader title="Skills" />
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -762,7 +762,7 @@ export default function SetupPage() {
           <div className="rounded-lg border dark:border-slate-700 bg-white dark:bg-slate-800 divide-y dark:divide-slate-700">
             <div className="p-4 space-y-4">
               <div className="flex items-center gap-2">
-                <span className={`text-base font-semibold ${hasProfileSource ? "text-green-600" : "text-slate-800"}`}>
+                <span className={`text-base font-semibold ${hasProfileSource ? "text-green-600" : "text-slate-800 dark:text-slate-100"}`}>
                   1. Upload your source profile
                 </span>
                 {hasProfileSource && (
@@ -774,12 +774,12 @@ export default function SetupPage() {
                 Upload a resume or profile file in <strong>PDF</strong>, <strong>DOCX</strong>, or <strong>JSON</strong>. Envoy stores the original file, extracts a raw profile artifact, and uses that to build the canonical target profile.
               </p>
 
-              <div className="rounded border bg-slate-50 p-3 space-y-3">
+              <div className="rounded border dark:border-slate-600 bg-slate-50 dark:bg-slate-700 p-3 space-y-3">
                 <input
                   type="file"
                   accept=".pdf,.docx,.json,application/pdf,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                  className="block w-full text-sm text-slate-700 file:mr-4 file:rounded file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-700"
+                  className="block w-full text-sm text-slate-700 dark:text-slate-300 file:mr-4 file:rounded file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-700"
                 />
                 <div className="flex items-center gap-3">
                   <button
@@ -795,12 +795,12 @@ export default function SetupPage() {
                 </div>
               </div>
 
-              <div className="grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+              <div className="grid gap-2 text-xs text-slate-500 dark:text-slate-400 sm:grid-cols-2">
                 <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
-                  Raw profile path: <span className="font-mono text-slate-700">{status.raw_profile_path}</span>
+                  Raw profile path: <span className="font-mono text-slate-700 dark:text-slate-300">{status.raw_profile_path}</span>
                 </div>
                 <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
-                  Latest upload: <span className="font-mono text-slate-700">{status.latest_uploaded_filename || "None yet"}</span>
+                  Latest upload: <span className="font-mono text-slate-700 dark:text-slate-300">{status.latest_uploaded_filename || "None yet"}</span>
                 </div>
               </div>
 
@@ -824,7 +824,7 @@ export default function SetupPage() {
 
             <div className="p-4 space-y-4">
               <div className="flex items-center gap-2">
-                <span className={`text-base font-semibold ${status.raw_profile_exists ? "text-green-600" : "text-slate-800"}`}>
+                <span className={`text-base font-semibold ${status.raw_profile_exists ? "text-green-600" : "text-slate-800 dark:text-slate-100"}`}>
                   2. Review parsed raw profile
                 </span>
                 {status.raw_profile_exists && (
@@ -852,7 +852,7 @@ export default function SetupPage() {
 
             <div className="p-4 space-y-4">
               <div className="flex items-center gap-2">
-                <span className={`text-base font-semibold ${status.target_profile_exists ? "text-green-600" : "text-slate-800"}`}>
+                <span className={`text-base font-semibold ${status.target_profile_exists ? "text-green-600" : "text-slate-800 dark:text-slate-100"}`}>
                   3. Build your target profile
                 </span>
                 {status.target_profile_exists && (
@@ -920,18 +920,18 @@ export default function SetupPage() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <SectionHeader title="Overall Status" />
-                        <p className="mt-1 text-sm text-indigo-950">
+                        <p className="mt-1 text-sm text-indigo-950 dark:text-indigo-200">
                           Canonical profile completeness is {profileCompletionPercent}%.
                         </p>
                       </div>
-                      <div className="rounded border border-indigo-200 bg-white px-3 py-2 text-xs text-indigo-900">
+                      <div className="rounded border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-800 px-3 py-2 text-xs text-indigo-900 dark:text-indigo-200">
                         {itemsWithOpenGaps.length === 0
                           ? "All STAR cards are filled"
                           : `${itemsWithOpenGaps.length} items still need work`}
                       </div>
                     </div>
 
-                    <div className="grid gap-2 md:grid-cols-4 text-xs text-slate-700">
+                    <div className="grid gap-2 md:grid-cols-4 text-xs text-slate-700 dark:text-slate-300">
                       <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Evidence items: <span className="font-medium">{editableEvidenceItems.length}</span>
                       </div>
@@ -946,7 +946,7 @@ export default function SetupPage() {
                       </div>
                     </div>
 
-                    <div className="grid gap-2 md:grid-cols-3 text-xs text-slate-700">
+                    <div className="grid gap-2 md:grid-cols-3 text-xs text-slate-700 dark:text-slate-300">
                       <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2">
                         Field completeness: <span className="font-medium">{profileCompletionPercent}%</span>
                       </div>
@@ -959,14 +959,14 @@ export default function SetupPage() {
                     </div>
 
                     {selectedEvidenceItem && (
-                      <div className="rounded border bg-white p-3 text-sm text-slate-700">
-                        <span className="font-medium text-slate-900">Selected item status:</span>{" "}
+                      <div className="rounded border dark:border-slate-600 bg-white dark:bg-slate-800 p-3 text-sm text-slate-700 dark:text-slate-300">
+                        <span className="font-medium text-slate-900 dark:text-slate-100">Selected item status:</span>{" "}
                         {selectedItemGaps.length === 0
                           ? `${selectedEvidenceItem.source}${selectedEvidenceItem.role_title ? ` · ${selectedEvidenceItem.role_title}` : ""} is filled and ready for approval or another interview pass.`
                           : `${selectedEvidenceItem.source}${selectedEvidenceItem.role_title ? ` · ${selectedEvidenceItem.role_title}` : ""} still needs ${selectedItemGaps.join(", ")}.`}
                         {" "}
                         {selectedItemQualityScore !== undefined && (
-                          <span className="text-slate-500">
+                          <span className="text-slate-500 dark:text-slate-400">
                             Current answer quality for this item: {formatPercentScore(selectedItemQualityScore)}.
                           </span>
                         )}
@@ -978,13 +978,13 @@ export default function SetupPage() {
                         Best Next Actions
                       </p>
                       {suggestedActions.length > 0 ? (
-                        <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-slate-700">
+                        <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-slate-700 dark:text-slate-300">
                           {suggestedActions.map((action) => (
                             <li key={action}>{action}</li>
                           ))}
                         </ul>
                       ) : (
-                        <p className="mt-2 text-sm text-slate-700">
+                        <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
                           The canonical profile is in a strong place. Focus on reviewing approved items and preparing the cover-letter flow to consume them.
                         </p>
                       )}
@@ -1001,7 +1001,7 @@ export default function SetupPage() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <SectionHeader title="Profile Interview" />
-                        <p className="mt-1 text-sm text-sky-900">
+                        <p className="mt-1 text-sm text-sky-900 dark:text-sky-200">
                           Select an experience or project, review the current STAR draft, and keep refining it through the interview or direct edits.
                         </p>
                       </div>
@@ -1030,7 +1030,7 @@ export default function SetupPage() {
                         <select
                           value={selectedEvidenceItem?.id ?? ""}
                           onChange={(event) => void handleSelectEvidenceItem(event.target.value)}
-                          className="mt-1 w-full rounded border border-sky-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                          className="mt-1 w-full rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-700 dark:text-slate-100 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
                         >
                           {editableEvidenceItems.map((item) => (
                             <option key={item.id} value={item.id}>
@@ -1042,14 +1042,14 @@ export default function SetupPage() {
                       </label>
 
                       {selectedEvidenceItem && (
-                        <div className="rounded border border-sky-200 bg-white p-3 space-y-3">
+                        <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 p-3 space-y-3">
                           <div className="flex items-center justify-between gap-3">
                             <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
                               {selectedEvidenceItem.source}
                               {selectedEvidenceItem.role_title ? ` · ${selectedEvidenceItem.role_title}` : ""}
                             </p>
                             <div className="flex items-center gap-2">
-                              <span className="text-[11px] uppercase tracking-wide text-sky-700">
+                              <span className="text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300">
                                 {selectedEvidenceItem.confidence}
                               </span>
                               <button
@@ -1058,7 +1058,7 @@ export default function SetupPage() {
                                   startInterviewMutation.isPending ||
                                   selectInterviewMutation.isPending
                                 }
-                                className="rounded border border-sky-300 bg-white px-2.5 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                                className="rounded border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-700 px-2.5 py-1 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 disabled:opacity-50"
                               >
                                 {startInterviewMutation.isPending || selectInterviewMutation.isPending
                                   ? "Starting…"
@@ -1069,7 +1069,7 @@ export default function SetupPage() {
                               </button>
                             </div>
                           </div>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
                             This uses the current STAR answers on this card as the starting point and asks only the next best follow-up.
                           </p>
                           <div className="flex flex-wrap gap-1.5">
@@ -1081,7 +1081,7 @@ export default function SetupPage() {
                           </div>
                           <div className="grid gap-3 md:grid-cols-2">
                             <label className="block">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                 Situation
                               </span>
                               <textarea
@@ -1094,7 +1094,7 @@ export default function SetupPage() {
                               />
                             </label>
                             <label className="block">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                 Task
                               </span>
                               <textarea
@@ -1107,7 +1107,7 @@ export default function SetupPage() {
                               />
                             </label>
                             <label className="block">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                 Action
                               </span>
                               <textarea
@@ -1120,7 +1120,7 @@ export default function SetupPage() {
                               />
                             </label>
                             <label className="block">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                 Outcome
                               </span>
                               <textarea
@@ -1134,7 +1134,7 @@ export default function SetupPage() {
                             </label>
                           </div>
                           <label className="block">
-                            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                               Metrics
                             </span>
                             <textarea
@@ -1152,20 +1152,20 @@ export default function SetupPage() {
 
                     {activeInterview && (
                       <div className="space-y-3">
-                        <div className="grid gap-2 text-xs text-sky-800 sm:grid-cols-3">
-                          <div className="rounded border border-sky-200 bg-white px-3 py-2">
+                        <div className="grid gap-2 text-xs text-sky-800 dark:text-sky-300 sm:grid-cols-3">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 px-3 py-2">
                             Status: <span className="font-medium">{activeInterview.status}</span>
                           </div>
-                          <div className="rounded border border-sky-200 bg-white px-3 py-2">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 px-3 py-2">
                             Approved items: <span className="font-medium">{activeInterview.approved_items}</span>
                           </div>
-                          <div className="rounded border border-sky-200 bg-white px-3 py-2">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 px-3 py-2">
                             Total items: <span className="font-medium">{activeInterview.total_items}</span>
                           </div>
                         </div>
 
                         {activeInterview.current_item_id === selectedEvidenceItem?.id && (
-                          <div className="rounded border border-sky-200 bg-white px-3 py-2 text-xs text-sky-800">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 px-3 py-2 text-xs text-sky-800 dark:text-sky-300">
                             Completeness {Math.round(activeInterview.completeness_score * 100)}%
                             {" · "}
                             Open gaps: {activeInterview.open_gaps.length ? activeInterview.open_gaps.join(", ") : "none"}
@@ -1175,18 +1175,18 @@ export default function SetupPage() {
                         )}
 
                         {activeInterview.status === "waiting_for_user" && (
-                          <div className="rounded border border-sky-200 bg-white p-3">
-                            <p className="text-sm font-medium text-sky-900">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 p-3">
+                            <p className="text-sm font-medium text-sky-900 dark:text-sky-200">
                               {activeInterview.current_prompt.question || activeInterview.current_question}
                             </p>
                             {activeInterview.current_prompt.assistant_message && (
-                              <div className="mt-3 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                              <div className="mt-3 rounded border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 px-3 py-2 text-xs text-sky-900 dark:text-sky-200">
                                 {activeInterview.current_prompt.assistant_message}
                               </div>
                             )}
                             {activeInterview.current_prompt.source_basis.length > 0 && (
-                              <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              <div className="mt-3 rounded border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                   Why Envoy suggested this
                                 </p>
                                 <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600 dark:text-slate-300">
@@ -1197,7 +1197,7 @@ export default function SetupPage() {
                               </div>
                             )}
                             {activeInterview.current_prompt.improvement_hint && (
-                              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                              <div className="mt-3 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
                                 <span className="font-medium">How to make it stronger:</span>{" "}
                                 {activeInterview.current_prompt.improvement_hint}
                               </div>
@@ -1205,7 +1205,7 @@ export default function SetupPage() {
                             {(activeInterview.last_answer_assessment.strengths.length > 0 ||
                               activeInterview.last_answer_assessment.weaknesses.length > 0 ||
                               activeInterview.last_answer_assessment.next_focus) && (
-                              <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950 space-y-2">
+                              <div className="mt-3 rounded border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-3 text-xs text-emerald-950 dark:text-emerald-200 space-y-2">
                                 <p className="font-medium">
                                   Latest answer quality: {formatPercentScore(activeInterview.last_answer_assessment.score)}
                                 </p>
@@ -1244,39 +1244,39 @@ export default function SetupPage() {
                               <button
                                 onClick={() => void handleClarifyInterview()}
                                 disabled={clarifyInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {clarifyInterviewMutation.isPending ? "Clarifying…" : "Clarify"}
                               </button>
                               <button
                                 onClick={() => void handleExampleInterview()}
                                 disabled={exampleInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {exampleInterviewMutation.isPending ? "Loading…" : "Show example"}
                               </button>
                               <button
                                 onClick={() => void handleRephraseInterview()}
                                 disabled={rephraseInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {rephraseInterviewMutation.isPending ? "Rephrasing…" : "Ask differently"}
                               </button>
                               <button
                                 onClick={() => void handleDeferInterview()}
                                 disabled={deferInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {deferInterviewMutation.isPending ? "Continuing…" : "Use this and continue"}
                               </button>
                               <button
                                 onClick={() => void handleCompleteInterview()}
                                 disabled={completeInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {completeInterviewMutation.isPending ? "Ending…" : "End interview"}
                               </button>
-                              <span className="text-xs text-sky-700">
+                              <span className="text-xs text-sky-700 dark:text-sky-300">
                                 Edit the draft however you like. Envoy will rewrite the evidence item and then ask the next best follow-up.
                               </span>
                             </div>
@@ -1284,16 +1284,16 @@ export default function SetupPage() {
                         )}
 
                         {activeInterview.status === "awaiting_confirmation" && (
-                          <div className="rounded border border-sky-200 bg-white p-3">
-                            <p className="text-sm font-medium text-sky-900">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 p-3">
+                            <p className="text-sm font-medium text-sky-900 dark:text-sky-200">
                               {activeInterview.current_prompt.question || "Does that capture what you meant?"}
                             </p>
                             {activeInterview.current_prompt.assistant_message && (
-                              <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950">
+                              <div className="mt-3 rounded border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-xs text-emerald-950 dark:text-emerald-200">
                                 {activeInterview.current_prompt.assistant_message}
                               </div>
                             )}
-                            <p className="mt-3 text-xs text-sky-700">
+                            <p className="mt-3 text-xs text-sky-700 dark:text-sky-300">
                               The STAR fields above are editable. Tweak them if needed, then confirm to save this turn and continue.
                             </p>
                             <div className="mt-3 flex items-center gap-3">
@@ -1307,14 +1307,14 @@ export default function SetupPage() {
                               <button
                                 onClick={() => void handleRephraseInterview()}
                                 disabled={rephraseInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {rephraseInterviewMutation.isPending ? "Rephrasing…" : "Ask differently"}
                               </button>
                               <button
                                 onClick={() => void handleCompleteInterview()}
                                 disabled={completeInterviewMutation.isPending}
-                                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                className="rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                               >
                                 {completeInterviewMutation.isPending ? "Ending…" : "End interview"}
                               </button>
@@ -1323,8 +1323,8 @@ export default function SetupPage() {
                         )}
 
                         {activeInterview.status === "reviewing" && (
-                          <div className="rounded border border-sky-200 bg-white p-3">
-                            <p className="text-sm text-sky-900">
+                          <div className="rounded border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 p-3">
+                            <p className="text-sm text-sky-900 dark:text-sky-200">
                               This evidence item is ready for approval. Approve it to save it into the canonical profile and move to the next item.
                             </p>
                             <button
@@ -1337,14 +1337,14 @@ export default function SetupPage() {
                             <button
                               onClick={() => void handleDeferInterview()}
                               disabled={deferInterviewMutation.isPending}
-                              className="mt-3 ml-3 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              className="mt-3 ml-3 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                             >
                               {deferInterviewMutation.isPending ? "Continuing…" : "Use this and continue"}
                             </button>
                             <button
                               onClick={() => void handleCompleteInterview()}
                               disabled={completeInterviewMutation.isPending}
-                              className="mt-3 ml-3 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              className="mt-3 ml-3 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 disabled:opacity-50"
                             >
                               {completeInterviewMutation.isPending ? "Ending…" : "End interview"}
                             </button>
@@ -1432,14 +1432,14 @@ export default function SetupPage() {
 
             <div className="p-4">
               <div className="flex items-center gap-2 mb-1">
-                <span className={`text-base font-semibold ${status.chrome_has_cookies ? "text-green-600" : "text-slate-800"}`}>
+                <span className={`text-base font-semibold ${status.chrome_has_cookies ? "text-green-600" : "text-slate-800 dark:text-slate-100"}`}>
                   4. Log in to job providers
                 </span>
                 {status.chrome_has_cookies && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Done</span>
                 )}
               </div>
-              <p className="text-sm text-slate-500 mb-3">
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
                 Envoy uses a <strong>dedicated browser profile</strong>, separate from your personal Chrome, so it only has access to the accounts you log in to here.
               </p>
 
@@ -1469,7 +1469,7 @@ export default function SetupPage() {
               </div>
 
               {loginMutation.isSuccess && (
-                <p className="mt-3 text-sm text-slate-500">
+                <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
                   Chrome opened. Log in, then come back here. This page refreshes automatically.
                 </p>
               )}

@@ -25,10 +25,10 @@ function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="ml-auto text-xs font-medium px-2.5 py-1 rounded border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:border-slate-400 dark:hover:border-slate-400 transition-colors"
+      className="ml-auto flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-slate-400 dark:hover:border-slate-400 transition-colors"
       title="Toggle dark mode"
     >
-      {theme === "dark" ? "Light" : "Dark"}
+      {theme === "dark" ? "☀ Light" : "☾ Dark"}
     </button>
   );
 }

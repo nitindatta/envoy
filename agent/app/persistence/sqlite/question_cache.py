@@ -1,6 +1,6 @@
 """SQLite repository for the question/answer cache.
 
-Stores human-approved answers to employer screening questions and provides
+Stores approved answers to employer screening questions and provides
 keyword-overlap search so answer_field.py can skip the LLM for familiar
 questions.
 """
@@ -53,6 +53,7 @@ class SqliteQuestionCacheRepository:
         question_raw: str,
         answer: str,
         field_type: str | None = None,
+        source: str = "human",
     ) -> str:
         """Upsert: if an identical normalized question already exists update its answer."""
         question_norm = normalize(question_raw)
@@ -68,8 +69,8 @@ class SqliteQuestionCacheRepository:
         if row:
             entry_id = row["id"]
             await self._db.execute(
-                "UPDATE question_answer_cache SET answer=?, field_type=?, created_at=? WHERE id=?",
-                (answer, field_type, now, entry_id),
+                "UPDATE question_answer_cache SET answer=?, field_type=?, source=?, created_at=? WHERE id=?",
+                (answer, field_type, source, now, entry_id),
             )
         else:
             entry_id = str(uuid.uuid4())
@@ -77,9 +78,9 @@ class SqliteQuestionCacheRepository:
                 """
                 INSERT INTO question_answer_cache
                     (id, question_raw, question_norm, answer, field_type, source, created_at)
-                VALUES (?, ?, ?, ?, ?, 'human', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (entry_id, question_raw, question_norm, answer, field_type, now),
+                (entry_id, question_raw, question_norm, answer, field_type, source, now),
             )
         await self._db.commit()
         return entry_id
@@ -117,7 +118,7 @@ class SqliteQuestionCacheRepository:
 
     async def list_all(self) -> list[dict]:
         cursor = await self._db.execute(
-            "SELECT id, question_raw, answer, field_type, created_at, use_count "
+            "SELECT id, question_raw, answer, field_type, source, created_at, use_count "
             "FROM question_answer_cache ORDER BY created_at DESC"
         )
         rows = await cursor.fetchall()

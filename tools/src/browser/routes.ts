@@ -302,26 +302,16 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
     for (const { id, value } of parsed.data.fields) {
       try {
         // Resolve element: native id/name → data attrs → label-based (stable across re-renders)
-        let el;
-        if (id.startsWith('__lbl_')) {
-          // Extract original label from __lbl_the_label__ pattern
-          const labelKey = id.replace(/^__lbl_/, '').replace(/__$/, '').replace(/_/g, ' ');
-          el = session.page.getByLabel(labelKey, { exact: false }).first();
-        } else {
-          el = session.page.locator(`[id="${id}"], [name="${id}"]`).first();
-          if (!(await el.count())) {
-            el = session.page.locator(`[data-testid="${id}"], [data-automation="${id}"]`).first();
-          }
-        }
-        if (!(await el.count())) { failed_ids.push(id); continue; }
+        const attachedEl = await resolveAttachedTarget(session.page, id);
+        if (!attachedEl) { failed_ids.push(id); continue; }
 
-        const tagName = await el.evaluate((e) => (e as HTMLElement).tagName.toLowerCase());
-        const inputType = await el.evaluate((e) => (e as HTMLInputElement).type ?? '');
+        const tagName = await attachedEl.evaluate((e) => (e as HTMLElement).tagName.toLowerCase());
+        const inputType = await attachedEl.evaluate((e) => (e as HTMLInputElement).type ?? '');
 
         if (inputType === 'radio') {
           // Radio group: id is the group name. Use Playwright locator.click() (not DOM click)
           // so React synthetic event handlers fire properly.
-          const radios = session.page.locator(`input[name="${id}"]`);
+          const radios = session.page.locator(`input[name="${attributeValue(id)}"]`);
           const count = await radios.count();
           let matched = false;
           for (let i = 0; i < count; i++) {
@@ -336,18 +326,26 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
               return lbl?.textContent?.trim() ?? '';
             }, radioId);
             if (labelText.toLowerCase() === value.toLowerCase()) {
-              await radio.click();
+              await radio.click({ timeout: FIELD_ACTION_TIMEOUT_MS });
               matched = true;
               break;
             }
           }
           if (matched) filled_ids.push(id); else failed_ids.push(id);
           continue;
-        } else if (inputType === 'checkbox') {
+        }
+
+        const el = await resolveFillTarget(session.page, id);
+        if (!el) { failed_ids.push(id); continue; }
+
+        if (inputType === 'checkbox') {
           const shouldCheck = ['yes', 'true', '1'].includes(value.toLowerCase());
-          if (shouldCheck) await el.check(); else await el.uncheck();
+          if (shouldCheck) await el.check({ timeout: FIELD_ACTION_TIMEOUT_MS });
+          else await el.uncheck({ timeout: FIELD_ACTION_TIMEOUT_MS });
         } else if (tagName === 'select') {
-          await el.selectOption({ label: value }).catch(async () => el.selectOption({ value }));
+          await el.selectOption({ label: value }, { timeout: FIELD_ACTION_TIMEOUT_MS }).catch(async () =>
+            el.selectOption({ value }, { timeout: FIELD_ACTION_TIMEOUT_MS }),
+          );
         } else if (inputType === 'file') {
           failed_ids.push(id); continue;
         } else if (tagName === 'textarea') {
@@ -355,8 +353,8 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
           // Without resetting the tracker, dispatching input fires but React
           // thinks nothing changed and skips the state update — causing
           // form validation to treat the textarea as empty.
-          await el.scrollIntoViewIfNeeded().catch(() => {});
-          await el.focus().catch(() => {});
+          await el.scrollIntoViewIfNeeded({ timeout: FIELD_ACTION_TIMEOUT_MS }).catch(() => {});
+          await el.focus({ timeout: FIELD_ACTION_TIMEOUT_MS }).catch(() => {});
           await el.evaluate((node, val) => {
             const ta = node as HTMLTextAreaElement & { _valueTracker?: { setValue(v: string): void } };
             const setter = Object.getOwnPropertyDescriptor(
@@ -370,7 +368,7 @@ export function registerBrowserRoutes(app: FastifyInstance): void {
           }, value);
           await el.evaluate((node) => (node as HTMLTextAreaElement).blur()).catch(() => {});
         } else {
-          await el.fill(value);
+          await el.fill(value, { timeout: FIELD_ACTION_TIMEOUT_MS });
         }
         filled_ids.push(id);
       } catch { failed_ids.push(id); }
