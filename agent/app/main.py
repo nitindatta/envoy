@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 _ROOT_DIR = Path(__file__).resolve().parents[2]
 _AGENT_LOG_PATH = _ROOT_DIR / "logs" / "agent.log"
@@ -74,6 +75,7 @@ def _configure_logging() -> None:
 _configure_logging()
 
 from app.api.applications import router as applications_router
+from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
 from app.api.profile_interview import router as profile_interview_router
@@ -146,10 +148,17 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5200", "http://127.0.0.1:5200"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(health_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
     app.include_router(applications_router, prefix="/api")
     app.include_router(workflows_router, prefix="/api")
+    app.include_router(events_router)
     app.include_router(setup_router)
     app.include_router(profile_interview_router)
     return app

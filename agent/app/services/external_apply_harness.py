@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.services.external_apply_ai import propose_external_apply_action, propose_external_apply_actions
+from app.services.run_events import emit as _emit
 from app.services.external_apply_policy import (
     is_standard_privacy_consent_field,
     validate_external_apply_action,
@@ -117,6 +118,15 @@ async def run_external_apply_step(
     memory = approved_memory or []
     traces = list(recent_actions or [])
     observation = await observe_fn(tool_client, session_key)
+    _emit("observe", f"observe: {observation.page_type} @ {observation.url[:70]}", {
+        "url": observation.url,
+        "page_type": observation.page_type,
+        "fields_count": len(observation.fields),
+        "buttons_count": len(observation.buttons),
+        "fields": [{"id": f.element_id, "label": f.label, "type": f.field_type} for f in observation.fields[:10]],
+        "buttons": [{"id": b.element_id, "label": b.label} for b in observation.buttons[:6]],
+        "visible_text": (observation.visible_text or "")[:200],
+    })
     effective_batch_planner = batch_planner_fn
     if effective_batch_planner is None and planner_fn is propose_external_apply_action:
         effective_batch_planner = propose_external_apply_actions
@@ -159,6 +169,16 @@ async def run_external_apply_step(
     mutated_current_page = False
 
     for action in actions:
+        _emit("plan", f"plan: {action.action_type}", {
+            "action_type": action.action_type,
+            "element_id": action.element_id,
+            "value": (action.value or "")[:80],
+            "confidence": action.confidence,
+            "risk": action.risk,
+            "reason": action.reason,
+            "source": action.source,
+            "question": action.question,
+        })
         if action.action_type == "click" and mutated_current_page and last_state is not None:
             return last_state
 
@@ -183,6 +203,12 @@ async def run_external_apply_step(
             proposed_action=planned.proposed_action,
             profile_facts=profile_facts,
         )
+        _emit("policy", f"policy: {policy.decision}", {
+            "decision": policy.decision,
+            "pause_reason": policy.pause_reason,
+            "risk_flags": policy.risk_flags,
+            "reason": policy.reason,
+        })
 
         if policy.decision != "allowed":
             trace = ActionTrace(
@@ -203,6 +229,14 @@ async def run_external_apply_step(
             )
 
         result = await execute_fn(tool_client, session_key, planned.proposed_action)
+        _emit("execute", f"execute: {planned.proposed_action.action_type} -> {'ok' if result.ok else 'fail'}", {
+            "action_type": planned.proposed_action.action_type,
+            "element_id": planned.proposed_action.element_id,
+            "value": (planned.proposed_action.value or "")[:80],
+            "ok": result.ok,
+            "message": result.message,
+            "new_url": result.new_url,
+        })
         trace = ActionTrace(
             observation=observation,
             proposed_action=planned.proposed_action,

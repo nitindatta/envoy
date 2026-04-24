@@ -26,6 +26,7 @@ from app.persistence.sqlite.jobs import SqliteJobRepository
 from app.settings import Settings
 from app.state.prepare import PrepareState
 from app.providers import registry
+from app.services.run_events import emit as _emit
 from app.tools.client import ToolClient
 from app.workflows.cover_letter import run_cover_letter
 
@@ -43,6 +44,7 @@ def build_prepare_graph(
 
     async def fetch_detail(state: PrepareState) -> dict[str, Any]:
         log.info("[fetch_detail] job_id=%s", state.job_id)
+        _emit("node", "fetch_detail: fetching job description", {"job_id": state.job_id})
         job = await job_repo.get(state.job_id)
         if job is None:
             log.warning("[fetch_detail] job_id=%s not found in database", state.job_id)
@@ -59,6 +61,7 @@ def build_prepare_graph(
         detail = await adapter.fetch_detail(tool_client, provider_job_id)
         log.info("[fetch_detail] done title=%s company=%s desc_len=%d",
                  detail.title, detail.company, len(detail.description))
+        _emit("node", f"fetch_detail: got JD — {detail.title} @ {detail.company}", {"title": detail.title, "company": detail.company, "desc_len": len(detail.description)})
         return {"detail": detail}
 
     async def generate(state: PrepareState) -> dict[str, Any]:
@@ -76,12 +79,14 @@ def build_prepare_graph(
                 log.info("[generate] no cached analysis for job=%s, parse_jd will run", state.detail.title)
 
         log.info("[generate] starting cover letter for job=%s", state.detail.title)
+        _emit("node", f"generate: writing cover letter for {state.detail.title}", {"job": state.detail.title, "company": state.detail.company})
         cl_result = await run_cover_letter(
             settings, job=state.detail, profile=profile, cached_analysis=cached
         )
         log.info("[generate] cover_letter: suitable=%s gaps=%s words=%d evidence_lines=%d",
                  cl_result.is_suitable, cl_result.gaps, len(cl_result.cover_letter.split()),
                  len(cl_result.evidence.splitlines()))
+        _emit("node", f"generate: done — suitable={cl_result.is_suitable} fit={cl_result.fit_score} words={len(cl_result.cover_letter.split())}", {"is_suitable": cl_result.is_suitable, "fit_score": cl_result.fit_score, "gaps": cl_result.gaps, "words": len(cl_result.cover_letter.split())})
         return {
             "cover_letter": cl_result.cover_letter,
             "is_suitable": cl_result.is_suitable,

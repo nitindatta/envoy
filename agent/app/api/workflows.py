@@ -15,6 +15,7 @@ from app.tools.indeed_detail import IndeedDetailDriftError, IndeedDetailError
 from app.tools.linkedin import LinkedInDriftError, LinkedInToolError
 from app.tools.linkedin_detail import LinkedInDetailDriftError, LinkedInDetailError
 from app.tools.seek_detail import SeekDetailDriftError, SeekDetailError
+from app.services.run_events import set_run_id
 from app.workflows.apply import resume_apply, run_apply
 from app.workflows.prepare import run_prepare
 from app.workflows.search import run_search
@@ -24,6 +25,7 @@ router = APIRouter()
 
 @router.post("/workflows/prepare", response_model=PrepareResponse)
 async def start_prepare(request: Request, body: PrepareRequest) -> PrepareResponse:
+    set_run_id(f"prepare-{body.job_id}")
     try:
         state = await run_prepare(
             request.app.state.settings,
@@ -114,6 +116,7 @@ async def generate_questions(request: Request, body: QuestionsRequest) -> Questi
 async def start_apply(request: Request, body: ApplyRequest) -> ApplyStepResponse:
     run_repo = request.app.state.workflow_run_repository
     run_id = await run_repo.create(application_id=body.application_id, workflow_type="apply")
+    set_run_id(run_id)
 
     state = await run_apply(
         request.app.state.settings,
@@ -132,6 +135,7 @@ async def start_apply(request: Request, body: ApplyRequest) -> ApplyStepResponse
 
 @router.post("/workflows/apply/{run_id}/resume", response_model=ApplyStepResponse)
 async def resume_apply_run(run_id: str, request: Request, body: ApplyResumeRequest) -> ApplyStepResponse:
+    set_run_id(run_id)
     state = await resume_apply(
         request.app.state.settings,
         request.app.state.tool_client,

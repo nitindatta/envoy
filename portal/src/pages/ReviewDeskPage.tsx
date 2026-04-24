@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import RunLog from "../components/RunLog";
 import {
   fetchApplications,
   fetchApplicationDetail,
@@ -1577,6 +1578,7 @@ export default function ReviewDeskPage() {
       {/* Right panel */}
       <div style={{ flex: 1, minWidth: 0 }}>
         {renderRightPanel()}
+        <RunLog runId={selectedAppId} />
       </div>
     </div>
   );

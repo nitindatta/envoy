@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { EXTERNAL_USER_ANSWER_KEY, startApply, resumeApply } from "../api/applications";
 import type { ApplyStepResponse, FieldInfo } from "../api/schemas";
+import RunLog from "../components/RunLog";
 
 type Phase = "idle" | "starting" | "gate" | "done" | "error";
 
@@ -302,6 +303,7 @@ export default function ApplyPage() {
           )}
         </div>
       )}
+      <RunLog runId={response?.workflow_run_id} />
     </div>
   );
 }

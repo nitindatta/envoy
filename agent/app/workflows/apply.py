@@ -46,6 +46,7 @@ from app.tools.browser_client import (
     open_url,
     BrowserToolError,
 )
+from app.services.run_events import emit as _emit
 from app.tools.client import ToolClient, ToolServiceError
 
 
@@ -181,6 +182,7 @@ def build_apply_graph(
     # ── launch ─────────────────────────────────────────────────────────────
     async def node_launch(state: ApplyState) -> dict[str, Any]:
         log.info("[launch] application_id=%s", state.application_id)
+        _emit("node", "launch: opening browser session", {"application_id": state.application_id})
         app = await app_repo.get(state.application_id)
         if app is None:
             log.warning("[launch] application not found: %s", state.application_id)
@@ -301,6 +303,7 @@ def build_apply_graph(
             return {}
 
         log.info("[inspect] session_key=%s", state.session_key)
+        _emit("node", "inspect: reading form page", {"session_key": state.session_key})
         try:
             step, env = await inspect_apply_step(tool_client, state.session_key)
         except (BrowserToolError, ToolServiceError) as exc:
@@ -333,6 +336,7 @@ def build_apply_graph(
 
         log.info("[inspect] page_type=%s fields=%d actions=%s",
                  step.page_type, len(step.fields), step.visible_actions)
+        _emit("node", f"inspect: {step.page_type} — {len(step.fields)} fields", {"page_type": step.page_type, "fields": len(step.fields), "actions": step.visible_actions, "url": step.page_url})
 
         if step.page_type == "confirmation":
             log.info("[inspect] confirmation page — marking completed")
@@ -458,6 +462,7 @@ def build_apply_graph(
 
         log.info("[propose] application_id=%s fields=%d page_type=%s",
                  state.application_id, len(state.current_step.fields), state.current_step.page_type)
+        _emit("node", f"propose: resolving {len(state.current_step.fields)} fields", {"fields": [f.label for f in state.current_step.fields[:10]], "page_type": state.current_step.page_type})
 
         cover_letter = await draft_repo.get_cover_letter(state.application_id)
         if not cover_letter:
@@ -476,6 +481,7 @@ def build_apply_graph(
         )
 
         log.info("[propose] done: proposed=%d low_confidence=%s", len(proposed), low_conf_ids)
+        _emit("node", f"propose: done — {len(proposed)} values, {len(low_conf_ids)} low-confidence", {"proposed": {k: str(v)[:80] for k, v in proposed.items()}, "low_confidence_ids": low_conf_ids})
         return {"proposed_values": proposed, "low_confidence_ids": low_conf_ids}
 
     # ── gate ───────────────────────────────────────────────────────────────
@@ -502,6 +508,7 @@ def build_apply_graph(
 
         log.info("[submit] clicking final submit: session=%s action=%r",
                  state.session_key, state.submit_action_label)
+        _emit("node", f"submit: clicking '{state.submit_action_label}'", {"action_label": state.submit_action_label})
         try:
             next_step, env = await fill_and_continue(
                 tool_client,
@@ -580,6 +587,7 @@ def build_apply_graph(
 
         log.info("[fill] session_key=%s fields=%d action_label=%r",
                  state.session_key, len(state.proposed_values), state.action_label)
+        _emit("node", f"fill: submitting {len(state.proposed_values)} fields via '{state.action_label}'", {"fields_count": len(state.proposed_values), "action_label": state.action_label})
 
         try:
             next_step, env = await fill_and_continue(
@@ -638,6 +646,7 @@ def build_apply_graph(
 
         log.info("[fill] next page_type=%s fields=%d actions=%s",
                  next_step.page_type, len(next_step.fields), next_step.visible_actions)
+        _emit("node", f"fill: done — next page {next_step.page_type} ({len(next_step.fields)} fields)", {"page_type": next_step.page_type, "fields": len(next_step.fields), "actions": next_step.visible_actions})
 
         if next_step.page_type == "confirmation":
             log.info("[fill] application submitted — confirmation page")
@@ -700,6 +709,7 @@ def build_apply_graph(
     async def node_finish(state: ApplyState) -> dict[str, Any]:
         log.info("[finish] application_id=%s workflow_run_id=%s final_status=%s",
                  state.application_id, state.workflow_run_id, state.status)
+        _emit("node", f"finish: workflow ended — {state.status}", {"status": state.status, "steps": len(state.step_history), "error": state.error})
 
         if state.session_key:
             await close_session(tool_client, state.session_key)

@@ -13,6 +13,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from app.services.run_events import emit as _emit
 from app.settings import Settings
 from app.state.external_apply import ActionTrace, PageObservation, ProposedAction
 
@@ -69,6 +70,17 @@ async def propose_external_apply_action(
         approved_memory=approved_memory or [],
         recent_actions=recent_actions or [],
     )
+    _emit("llm_prompt", f"plan action: {observation.page_type} @ {observation.url[:60]}", {
+        "call": "propose_action",
+        "model": settings.openai_model,
+        "url": observation.url,
+        "page_type": observation.page_type,
+        "fields_count": len(observation.fields),
+        "buttons_count": len(observation.buttons),
+        "recent_actions_count": len(recent_actions or []),
+        "system": system[:400],
+        "user": user[:800],
+    })
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
@@ -80,7 +92,19 @@ async def propose_external_apply_action(
             max_tokens=360,
         )
         raw = response.choices[0].message.content or "{}"
-        return parse_planner_response(raw, observation)
+        action = parse_planner_response(raw, observation)
+        _emit("llm_response", f"planned: {action.action_type}", {
+            "call": "propose_action",
+            "raw": raw[:400],
+            "action_type": action.action_type,
+            "element_id": action.element_id,
+            "value": (action.value or "")[:80],
+            "confidence": action.confidence,
+            "risk": action.risk,
+            "reason": action.reason,
+            "source": action.source,
+        })
+        return action
     except Exception as exc:  # pragma: no cover - network/runtime dependent
         log.warning("[propose_external_apply_action] falling back: %s", exc)
         return fallback_proposed_action(observation, profile_facts or {}, approved_memory or [])
@@ -103,6 +127,17 @@ async def propose_external_apply_actions(
         approved_memory=approved_memory or [],
         recent_actions=recent_actions or [],
     )
+    _emit("llm_prompt", f"batch plan: {observation.page_type} @ {observation.url[:60]}", {
+        "call": "batch_plan",
+        "model": settings.openai_model,
+        "url": observation.url,
+        "page_type": observation.page_type,
+        "fields_count": len(observation.fields),
+        "buttons_count": len(observation.buttons),
+        "recent_actions_count": len(recent_actions or []),
+        "system": system[:400],
+        "user": user[:800],
+    })
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
@@ -114,7 +149,17 @@ async def propose_external_apply_actions(
             max_tokens=1200,
         )
         raw = response.choices[0].message.content or "{}"
-        return parse_planner_batch_response(raw, observation)
+        actions = parse_planner_batch_response(raw, observation)
+        _emit("llm_response", f"batch plan: {len(actions)} actions", {
+            "call": "batch_plan",
+            "raw": raw[:600],
+            "actions_count": len(actions),
+            "actions": [
+                {"action_type": a.action_type, "element_id": a.element_id, "confidence": a.confidence, "risk": a.risk}
+                for a in actions
+            ],
+        })
+        return actions
     except Exception as exc:  # pragma: no cover - network/runtime dependent
         log.warning("[propose_external_apply_actions] falling back: %s", exc)
         return [fallback_proposed_action(observation, profile_facts or {}, approved_memory or [])]

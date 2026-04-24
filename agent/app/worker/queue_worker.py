@@ -156,9 +156,11 @@ async def run_apply_worker(app_state: Any) -> None:
 # ── Handlers (unchanged) ───────────────────────────────────────────────────────
 
 async def _handle_prepare(item: Any, app_state: Any) -> None:
+    from app.services.run_events import set_run_id
     from app.workflows.prepare import run_prepare
 
     app_id = item.entity_id
+    set_run_id(app_id)
     app = await app_state.application_repository.get(app_id)
     if app is None:
         raise ValueError(f"application {app_id} not found")
@@ -181,6 +183,7 @@ async def _handle_prepare(item: Any, app_state: Any) -> None:
 
 async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
     from app.api.workflows import _apply_response
+    from app.services.run_events import set_run_id
     from app.workflows.apply import resume_apply, run_apply
 
     app_id = item.entity_id
@@ -192,6 +195,7 @@ async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
             payload = item.payload or {}
             run_repo = app_state.workflow_run_repository
             run_id = await run_repo.create(application_id=app_id, workflow_type="apply")
+            set_run_id(run_id)
             apply_state = await run_apply(
                 app_state.settings,
                 app_state.tool_client,
@@ -208,6 +212,7 @@ async def _handle_apply_or_resume(item: Any, app_state: Any) -> None:
         else:  # resume
             payload = item.payload
             run_id = payload["run_id"]
+            set_run_id(run_id)
             apply_state = await resume_apply(
                 app_state.settings,
                 app_state.tool_client,

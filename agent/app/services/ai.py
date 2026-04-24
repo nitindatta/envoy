@@ -12,6 +12,7 @@ import logging
 
 from openai import AsyncOpenAI
 
+from app.services.run_events import emit as _emit
 from app.settings import Settings
 from app.state.prepare import SeekJobDetail
 
@@ -87,6 +88,13 @@ CANDIDATE PROFILE:
 List the 3 strongest specific connections between this candidate and this job."""
 
     log.info("[generate_cover_letter] pass1 job=%s company=%s", job.title, job.company)
+    _emit("llm_prompt", f"cover_letter pass1: talking points for {job.title}", {
+        "call": "cover_letter_pass1",
+        "model": settings.openai_model,
+        "job": f"{job.title} at {job.company}",
+        "system": match_system[:400],
+        "user": match_user[:600],
+    })
     match_response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -97,6 +105,10 @@ List the 3 strongest specific connections between this candidate and this job.""
         max_tokens=400,
     )
     talking_points = match_response.choices[0].message.content or ""
+    _emit("llm_response", "cover_letter pass1: talking points extracted", {
+        "call": "cover_letter_pass1",
+        "content": talking_points[:600],
+    })
     log.debug("[generate_cover_letter] talking_points:\n%s", talking_points)
 
     # ── Pass 2: write the cover letter from the matched points ─────────────
@@ -115,6 +127,15 @@ Use these specific talking points as the backbone — address them in order:
 Write only the letter body."""
 
     log.info("[generate_cover_letter] pass2 job=%s | tone=%s max_words=%d", job.title, tone, max_words)
+    _emit("llm_prompt", f"cover_letter pass2: write letter for {job.title}", {
+        "call": "cover_letter_pass2",
+        "model": settings.openai_model,
+        "job": f"{job.title} at {job.company}",
+        "tone": tone,
+        "max_words": max_words,
+        "system": write_system[:400],
+        "user": write_user[:600],
+    })
     write_response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -126,6 +147,11 @@ Write only the letter body."""
     )
 
     letter = write_response.choices[0].message.content or ""
+    _emit("llm_response", f"cover_letter pass2: letter written ({len(letter.split())} words)", {
+        "call": "cover_letter_pass2",
+        "words": len(letter.split()),
+        "content": letter[:800],
+    })
     log.info("[generate_cover_letter] done job=%s | words=%d", job.title, len(letter.split()))
     log.debug("[generate_cover_letter] letter:\n%s", letter)
     return letter
@@ -156,6 +182,13 @@ Experience: {', '.join(e['title'] + ' at ' + e['company'] for e in profile.get('
 Predict 5 interview questions and draft answers."""
 
     log.info("[predict_questions] job=%s company=%s", job.title, job.company)
+    _emit("llm_prompt", f"predict_questions: {job.title} at {job.company}", {
+        "call": "predict_questions",
+        "model": settings.openai_model,
+        "job": f"{job.title} at {job.company}",
+        "system": system[:400],
+        "user": user[:600],
+    })
     response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
@@ -167,6 +200,10 @@ Predict 5 interview questions and draft answers."""
     )
 
     raw = response.choices[0].message.content or "[]"
+    _emit("llm_response", "predict_questions: received Q&A", {
+        "call": "predict_questions",
+        "raw": raw[:600],
+    })
     log.debug("[predict_questions] raw:\n%s", raw)
     try:
         questions = json.loads(raw)
