@@ -133,6 +133,13 @@ def validate_external_apply_action(
         )
 
     if action_type in {"fill_text", "select_option", "set_checkbox", "set_radio", "upload_file"}:
+        if target_field is None:
+            return PolicyDecision(
+                decision="paused",
+                reason="The planned form action targeted a non-field element, so Envoy needs to re-evaluate this control instead of executing blindly.",
+                pause_reason="needs_user_input",
+                risk_flags=["non_field_form_target"],
+            )
         if target_field and _looks_like_job_search_field(observation, target_field):
             return PolicyDecision(
                 decision="paused",
@@ -335,6 +342,15 @@ def _profile_values_for_field(field: ObservedField, profile_facts: dict[str, Any
         return _profile_values(profile_facts, ["email", "contact.email", "external_accounts.default.email", "default.email"])
     if re.search(r"\b(pass(word|code|phrase)?)\b", label):
         return _profile_values(profile_facts, ["password", "external_accounts.default.password", "default.password"])
+    if re.search(r"\b(previously worked|worked at|worked for|current employee|previous employee|employed by)\b", label):
+        answer = _prior_employment_answer(field.label, profile_facts)
+        return [answer] if answer else []
+    if re.search(r"\b(how did you hear|heard about|source)\b", label):
+        return _profile_values(profile_facts, ["heard_about", "external_accounts.default.heard_about", "default.heard_about"])
+    if re.search(r"\b(salutation|honorific)\b", label):
+        return _profile_values(profile_facts, ["salutation", "external_accounts.default.salutation", "default.salutation"])
+    if re.search(r"\b(phone device type|device type)\b", label):
+        return _profile_values(profile_facts, ["phone_device_type", "external_accounts.default.phone_device_type", "default.phone_device_type"])
     if re.search(r"\b(phone|mobile|telephone|tel)\b", label):
         return _profile_values(profile_facts, ["phone", "contact.phone"])
     if "linkedin" in label:
@@ -389,6 +405,69 @@ def _profile_truthy(profile_facts: dict[str, Any], path: str) -> bool:
     if isinstance(current, str):
         return current.strip().lower() in {"1", "true", "yes", "y", "on"}
     return bool(current)
+
+
+def _prior_employment_answer(label: str, profile_facts: dict[str, Any]) -> str | None:
+    employer = _extract_employer_name(label)
+    if not employer:
+        return None
+    prior_employers = _employment_history_employers(profile_facts)
+    if not prior_employers:
+        return None
+    normalized_target = _normalize_org_name(employer)
+    if not normalized_target:
+        return None
+    matched = any(
+        _normalize_org_name(company) == normalized_target
+        or _normalize_org_name(company) in normalized_target
+        or normalized_target in _normalize_org_name(company)
+        for company in prior_employers
+    )
+    return "Yes" if matched else "No"
+
+
+def _extract_employer_name(label: str) -> str:
+    text = label.strip().rstrip("?:. ")
+    lowered = text.lower()
+    patterns = [
+        r"(?:have you previously worked at|have you worked at|have you worked for)\s+(.+)",
+        r"(?:are you a current employee of|are you a previous employee of|are you currently employed by)\s+(.+)",
+        r"(?:previously employed by|currently employed by)\s+(.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if not match:
+            continue
+        start = match.start(1)
+        employer = text[start:].strip()
+        return re.sub(r"\s+", " ", employer).strip(" ?.:")
+    return ""
+
+
+def _employment_history_employers(profile_facts: dict[str, Any]) -> list[str]:
+    current: Any = profile_facts
+    for part in "employment_history.employers".split("."):
+        if not isinstance(current, dict):
+            current = None
+            break
+        current = current.get(part)
+    if not isinstance(current, list):
+        current = profile_facts
+        for part in "external_accounts.employment_history.employers".split("."):
+            if not isinstance(current, dict):
+                return []
+            current = current.get(part)
+    if not isinstance(current, list):
+        return []
+    return [str(item).strip() for item in current if str(item).strip()]
+
+
+def _normalize_org_name(value: str) -> str:
+    text = value.lower()
+    text = text.replace("&", " and ")
+    text = re.sub(r"\(.*?\)", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _matches_any_expected_value(value: str, expected_values: list[str]) -> bool:

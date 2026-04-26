@@ -667,6 +667,65 @@ async def test_run_external_apply_step_does_not_execute_when_policy_pauses() -> 
     assert state.completed_actions[0].result is None
 
 
+async def test_run_external_apply_step_coerces_source_select_to_first_available_option() -> None:
+    async def observe(_client: Any, _session_key: str) -> PageObservation:
+        return PageObservation(
+            url="https://ats.example/apply",
+            page_type="form",
+            fields=[
+                ObservedField(
+                    element_id="field_source",
+                    label="How did you hear about this role?",
+                    field_type="select",
+                    required=True,
+                    options=["LinkedIn", "Company website", "Referral"],
+                )
+            ],
+        )
+
+    async def planner(_settings: Any, **_kwargs: Any) -> ProposedAction:
+        return ProposedAction(
+            action_type="select_option",
+            element_id="field_source",
+            value="SEEK",
+            confidence=0.95,
+            risk="low",
+            reason="Configured default source for job applications.",
+            source="profile",
+        )
+
+    def policy(**_kwargs: Any) -> PolicyDecision:
+        return PolicyDecision(decision="allowed", reason="safe")
+
+    async def execute(_client: Any, _session_key: str, action: ProposedAction) -> ActionResult:
+        assert action.action_type == "select_option"
+        assert action.value == "LinkedIn"
+        assert "first safe available option" in action.reason
+        return ActionResult(
+            ok=True,
+            action_type="select_option",
+            element_id=action.element_id,
+            value_after=action.value,
+            new_url="https://ats.example/apply",
+        )
+
+    state = await run_external_apply_step(
+        DummySettings(),  # type: ignore[arg-type]
+        DummyToolClient(),  # type: ignore[arg-type]
+        session_key="session-1",
+        application_id="app-1",
+        profile_facts={},
+        observe_fn=observe,
+        planner_fn=planner,
+        policy_fn=policy,
+        execute_fn=execute,
+    )
+
+    assert state.status == "running"
+    assert state.last_action_result is not None
+    assert state.last_action_result.ok is True
+
+
 async def test_run_external_apply_step_marks_reject_as_failed_without_execute() -> None:
     async def observe(_client: Any, _session_key: str) -> PageObservation:
         return PageObservation(url="https://ats.example/apply")

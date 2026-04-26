@@ -110,6 +110,42 @@ def test_fallback_fills_password_from_external_accounts_default() -> None:
     assert action.source == "profile"
 
 
+def test_fallback_answers_prior_employment_question_from_profile_employer_history() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[ObservedField(element_id="field_svha", label="Have you previously worked at St Vincent's Health Australia (SVHA)?", field_type="radio")],
+    )
+
+    action = fallback_proposed_action(
+        observation,
+        {"employment_history": {"employers": ["AWS", "Department for Education, South Australia"]}},
+        [],
+    )
+
+    assert action.action_type == "set_radio"
+    assert action.element_id == "field_svha"
+    assert action.value == "No"
+    assert action.source == "profile"
+
+
+def test_fallback_fills_salutation_from_external_accounts_default() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[ObservedField(element_id="field_salutation", label="What salutation should be selected?", field_type="select")],
+    )
+
+    action = fallback_proposed_action(
+        observation,
+        {"external_accounts": {"default": {"salutation": "Mr"}}},
+        [],
+    )
+
+    assert action.action_type == "select_option"
+    assert action.element_id == "field_salutation"
+    assert action.value == "Mr"
+    assert action.source == "profile"
+
+
 def test_fallback_fills_home_address_from_canonical_profile() -> None:
     observation = PageObservation(
         url="https://ats.example/apply",

@@ -38,6 +38,7 @@ from app.services.external_apply_harness import (
     apply_external_user_answers,
     run_external_apply_step,
 )
+from app.services.runtime_profile import load_runtime_profile
 from app.settings import Settings
 from app.state.apply import ApplyState, StepInfo
 from app.tools.browser_client import (
@@ -53,39 +54,7 @@ from app.tools.client import ToolClient, ToolServiceError
 
 
 def _load_profile(settings: Settings) -> dict:
-    path = settings.resolved_profile_path
-    profile: dict[str, Any] = {}
-    if path.exists():
-        profile = json.loads(path.read_text(encoding="utf-8"))
-
-    target_path = settings.resolved_target_profile_path
-    if target_path.exists():
-        canonical = json.loads(target_path.read_text(encoding="utf-8"))
-        profile = _deep_merge_non_empty(profile, canonical)
-
-    external_accounts_path = settings.resolved_external_accounts_path
-    if external_accounts_path.exists():
-        external_accounts = json.loads(external_accounts_path.read_text(encoding="utf-8"))
-        if isinstance(external_accounts, dict):
-            profile["external_accounts"] = external_accounts
-
-    resume_path = settings.resolved_resume_path
-    if resume_path is not None:
-        profile["resume_path"] = str(resume_path)
-
-    return profile
-
-
-def _deep_merge_non_empty(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in overlay.items():
-        if value is None or value == "" or value == [] or value == {}:
-            continue
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge_non_empty(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
+    return load_runtime_profile(settings)
 
 
 def _is_session_lost(env) -> bool:

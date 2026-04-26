@@ -573,6 +573,46 @@ def _lookup_safe_value(
         if value:
             return str(value), "profile"
 
+    prior_employment = _prior_employment_answer(label, profile_facts)
+    if prior_employment is not None:
+        return prior_employment, "profile"
+
+    if re.search(r"\b(how did you hear|heard about|source)\b", label_lower):
+        value = _first_profile_value(
+            profile_facts,
+            [
+                "heard_about",
+                "external_accounts.default.heard_about",
+                "default.heard_about",
+            ],
+        )
+        if value:
+            return str(value), "profile"
+
+    if re.search(r"\b(salutation|honorific)\b", label_lower):
+        value = _first_profile_value(
+            profile_facts,
+            [
+                "salutation",
+                "external_accounts.default.salutation",
+                "default.salutation",
+            ],
+        )
+        if value:
+            return str(value), "profile"
+
+    if re.search(r"\b(phone device type|device type)\b", label_lower):
+        value = _first_profile_value(
+            profile_facts,
+            [
+                "phone_device_type",
+                "external_accounts.default.phone_device_type",
+                "default.phone_device_type",
+            ],
+        )
+        if value:
+            return str(value), "profile"
+
     mappings = [
         (("first name",), "first_name"),
         (("last name",), "last_name"),
@@ -640,6 +680,62 @@ def _profile_lookup_paths(profile_key: str) -> list[str]:
         "location": ["location", "city", "address.suburb"],
     }
     return mapping.get(profile_key, [profile_key])
+
+
+def _prior_employment_answer(label: str, profile_facts: dict[str, Any]) -> str | None:
+    if not re.search(r"\b(previously worked|worked at|worked for|current employee|previous employee|employed by)\b", label.lower()):
+        return None
+    employer = _extract_employer_name(label)
+    if not employer:
+        return None
+    prior_employers = _employment_history_employers(profile_facts)
+    if not prior_employers:
+        return None
+    normalized_target = _normalize_org_name(employer)
+    if not normalized_target:
+        return None
+    matched = any(
+        _normalize_org_name(company) == normalized_target
+        or _normalize_org_name(company) in normalized_target
+        or normalized_target in _normalize_org_name(company)
+        for company in prior_employers
+    )
+    return "Yes" if matched else "No"
+
+
+def _extract_employer_name(label: str) -> str:
+    text = label.strip().rstrip("?:. ")
+    patterns = [
+        r"(?:have you previously worked at|have you worked at|have you worked for)\s+(.+)",
+        r"(?:are you a current employee of|are you a previous employee of|are you currently employed by)\s+(.+)",
+        r"(?:previously employed by|currently employed by)\s+(.+)",
+    ]
+    lowered = text.lower()
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if not match:
+            continue
+        start = match.start(1)
+        employer = text[start:].strip()
+        return re.sub(r"\s+", " ", employer).strip(" ?.:")
+    return ""
+
+
+def _employment_history_employers(profile_facts: dict[str, Any]) -> list[str]:
+    history = _profile_path_value(profile_facts, "employment_history.employers")
+    if not isinstance(history, list):
+        history = _profile_path_value(profile_facts, "external_accounts.employment_history.employers")
+    if not isinstance(history, list):
+        return []
+    return [str(item).strip() for item in history if str(item).strip()]
+
+
+def _normalize_org_name(value: str) -> str:
+    text = value.lower()
+    text = text.replace("&", " and ")
+    text = re.sub(r"\(.*?\)", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _action_for_field(

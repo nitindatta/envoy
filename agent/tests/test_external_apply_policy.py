@@ -26,6 +26,32 @@ def test_policy_allows_safe_profile_backed_fill() -> None:
     assert decision.decision == "allowed"
 
 
+def test_policy_pauses_select_option_when_target_is_not_an_observed_field() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        buttons=[ObservedAction(element_id="button_20", label="How did you hear about us?", kind="button")],
+    )
+    action = ProposedAction(
+        action_type="select_option",
+        element_id="button_20",
+        value="SEEK",
+        confidence=0.94,
+        risk="low",
+        reason="Configured default source for job applications.",
+        source="profile",
+    )
+
+    decision = validate_external_apply_action(
+        observation=observation,
+        proposed_action=action,
+        profile_facts={"external_accounts": {"default": {"heard_about": "SEEK"}}},
+    )
+
+    assert decision.decision == "paused"
+    assert decision.pause_reason == "needs_user_input"
+    assert "non_field_form_target" in decision.risk_flags
+
+
 def test_policy_allows_password_fill_from_external_accounts_default() -> None:
     observation = PageObservation(
         url="https://ats.example/login",
@@ -45,6 +71,30 @@ def test_policy_allows_password_fill_from_external_accounts_default() -> None:
         observation=observation,
         proposed_action=action,
         profile_facts={"external_accounts": {"default": {"password": "Sunshine@123#5"}}},
+    )
+
+    assert decision.decision == "allowed"
+
+
+def test_policy_allows_prior_employment_answer_from_profile_history() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[ObservedField(element_id="field_svha", label="Have you previously worked at St Vincent's Health Australia (SVHA)?", field_type="radio")],
+    )
+    action = ProposedAction(
+        action_type="set_radio",
+        element_id="field_svha",
+        value="No",
+        confidence=0.94,
+        risk="low",
+        reason="Derived from prior employer history.",
+        source="profile",
+    )
+
+    decision = validate_external_apply_action(
+        observation=observation,
+        proposed_action=action,
+        profile_facts={"employment_history": {"employers": ["AWS", "Department for Education, South Australia"]}},
     )
 
     assert decision.decision == "allowed"
@@ -200,6 +250,30 @@ def test_policy_allows_required_create_account_terms_checkbox() -> None:
     )
 
     decision = validate_external_apply_action(observation=observation, proposed_action=action)
+
+    assert decision.decision == "allowed"
+
+
+def test_policy_allows_phone_device_type_from_external_accounts_default() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[ObservedField(element_id="field_device_type", label="What phone device type should be selected for your phone number?", field_type="select")],
+    )
+    action = ProposedAction(
+        action_type="select_option",
+        element_id="field_device_type",
+        value="Mobile",
+        confidence=0.98,
+        risk="low",
+        reason="Phone device type comes from configured defaults.",
+        source="profile",
+    )
+
+    decision = validate_external_apply_action(
+        observation=observation,
+        proposed_action=action,
+        profile_facts={"external_accounts": {"default": {"phone_device_type": "Mobile"}}},
+    )
 
     assert decision.decision == "allowed"
 

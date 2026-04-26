@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -192,6 +193,7 @@ async def run_external_apply_step(
             last_action_result=last_result,
         )
         planned = _apply_default_safe_action(planned, profile_facts)
+        planned = _coerce_noncritical_select_option(planned)
         if planned.proposed_action is None:
             return planned
         stale_click_question = _stale_repeated_click_question(
@@ -751,6 +753,62 @@ def _apply_default_safe_action(state: ExternalApplyState, profile_facts: dict[st
             "pending_user_questions": [],
         }
     )
+
+
+def _coerce_noncritical_select_option(state: ExternalApplyState) -> ExternalApplyState:
+    observation = state.observation
+    action = state.proposed_action
+    if observation is None or action is None or action.action_type != "select_option" or not action.element_id:
+        return state
+
+    target_field = next((field for field in observation.fields if field.element_id == action.element_id), None)
+    if target_field is None or not _is_noncritical_source_select_field(target_field):
+        return state
+
+    options = _usable_select_options(target_field.options)
+    if not options:
+        return state
+
+    if action.value and any(_normalize_option_text(option) == _normalize_option_text(action.value) for option in options):
+        return state
+
+    fallback_value = options[0]
+    fallback_action = action.model_copy(
+        update={
+            "value": fallback_value,
+            "reason": (
+                f"{action.reason} The configured source value was not available on this page, "
+                f"so Envoy selected the first safe available option: {fallback_value}."
+            ).strip(),
+        }
+    )
+    return state.model_copy(update={"proposed_action": fallback_action})
+
+
+def _is_noncritical_source_select_field(field: Any) -> bool:
+    if (field.field_type or "").strip().lower() != "select":
+        return False
+    label = " ".join([field.label or "", field.nearby_text or ""]).lower()
+    return bool(re.search(r"\b(how did you hear|heard about|source)\b", label))
+
+
+def _usable_select_options(options: list[str]) -> list[str]:
+    usable: list[str] = []
+    for option in options:
+        text = option.strip()
+        if not text:
+            continue
+        lowered = _normalize_option_text(text)
+        if lowered in {"select", "select one", "choose", "choose one", "please select", "please choose"}:
+            continue
+        if lowered.startswith("--") and lowered.endswith("--"):
+            continue
+        usable.append(text)
+    return usable
+
+
+def _normalize_option_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().lower()
 
 
 def _record_generic_prompt_ack(
