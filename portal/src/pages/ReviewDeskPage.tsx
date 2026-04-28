@@ -452,13 +452,15 @@ function ReviewMaterialsSection({
             style={{
               width: "100%",
               padding: "0.75rem",
-              border: "1px solid #d1d5db",
+              border: "1px solid var(--border)",
               borderRadius: 6,
               fontFamily: "inherit",
               fontSize: 13,
               resize: "vertical",
               whiteSpace: "pre-wrap",
               boxSizing: "border-box",
+              background: "var(--surface)",
+              color: "var(--text-primary)",
             }}
           />
         </div>
@@ -611,12 +613,12 @@ function GatePanel({ appStep, gateAnswers, setGateAnswers, onSubmit, isPending, 
                 style={{
                   width: "100%",
                   padding: "0.4rem 0.6rem",
-                  border: "1px solid #bae6fd",
+                  border: "1px solid var(--border)",
                   borderRadius: 4,
                   fontSize: 14,
                   boxSizing: "border-box",
-                  background: "#fff",
-                  color: "#0c4a6e",
+                  background: "var(--surface)",
+                  color: "var(--text-primary)",
                 }}
               />
             )}
@@ -708,11 +710,11 @@ function AwaitingSubmitPanel({ appStep, onSubmit, onCancel, isPendingSubmit, isP
                             style={{
                               width: "100%",
                               border: isEdited ? "1px solid #f59e0b" : "1px solid var(--border)",
-                              background: isEdited ? "#fffbeb" : "var(--surface)",
+                              background: "var(--surface)",
                               borderRadius: 4,
                               padding: "0.35rem 0.5rem",
                               fontSize: 13,
-                              color: isEdited ? "#92400e" : "#374151",
+                              color: "var(--text-primary)",
                               outline: "none",
                               resize: "vertical",
                               boxSizing: "border-box",
@@ -728,17 +730,17 @@ function AwaitingSubmitPanel({ appStep, onSubmit, onCancel, isPendingSubmit, isP
                             style={{
                               width: "100%",
                               border: isEdited ? "1px solid #f59e0b" : "1px solid transparent",
-                              background: isEdited ? "#fffbeb" : "transparent",
+                              background: "var(--surface)",
                               borderRadius: 4,
                               padding: "0.25rem 0.4rem",
                               fontSize: 13,
-                              color: isEdited ? "#92400e" : "#6b7280",
+                              color: "var(--text-primary)",
                               outline: "none",
                               cursor: "text",
                               boxSizing: "border-box",
                             }}
                             onFocus={(e) => {
-                              if (!isEdited) e.target.style.border = "1px solid #d1d5db";
+                              if (!isEdited) e.target.style.border = "1px solid var(--border)";
                             }}
                             onBlur={(e) => {
                               if (!isEdited) e.target.style.border = "1px solid transparent";

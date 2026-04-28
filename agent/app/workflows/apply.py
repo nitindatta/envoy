@@ -36,7 +36,12 @@ from app.services.external_apply_harness import (
     EXTERNAL_USER_ANSWER_PREFIX,
     EXTERNAL_USER_QUESTION_PREFIX,
     apply_external_user_answers,
+    realign_external_state_to_observation,
     run_external_apply_step,
+)
+from app.services.external_apply_recovery import (
+    is_session_lost_browser_error,
+    recover_external_session,
 )
 from app.services.runtime_profile import load_runtime_profile
 from app.settings import Settings
@@ -453,9 +458,43 @@ def build_apply_graph(
                 profile_facts=profile,
                 recent_actions=recent_actions,
             )
+            active_session_key = state.session_key
         except (BrowserToolError, ToolServiceError) as exc:
-            log.error("[external_apply] harness step failed: %s", exc)
-            return {"status": "failed", "error": str(exc)}
+            if not is_session_lost_browser_error(exc):
+                log.error("[external_apply] harness step failed: %s", exc)
+                return {"status": "failed", "error": str(exc)}
+
+            log.warning("[external_apply] session_not_found — attempting recovery")
+            ev("node", "external_apply: session lost — attempting recovery", {
+                "application_id": state.application_id,
+                "current_url": previous_external.current_url if previous_external else "",
+            })
+            recovered = await recover_external_session(
+                tool_client,
+                state=state,
+                app_repo=app_repo,
+                session_repo=session_repo,
+            )
+            if recovered is None:
+                log.error("[external_apply] recovery failed after session loss")
+                return {
+                    "status": "paused",
+                    "pause_reason": "session_lost",
+                    "error": "Browser session was lost while applying externally. Envoy could not recover it automatically.",
+                }
+            try:
+                external_state = await run_external_apply_step(
+                    settings,
+                    tool_client,
+                    session_key=recovered.session_key,
+                    application_id=state.application_id,
+                    profile_facts=profile,
+                    recent_actions=[],
+                )
+            except (BrowserToolError, ToolServiceError) as recovery_exc:
+                log.error("[external_apply] recovered session still failed: %s", recovery_exc)
+                return {"status": "failed", "error": str(recovery_exc)}
+            active_session_key = recovered.session_key
 
         next_state = state.model_copy(update={"external_apply": external_state})
         status, pause_reason = _status_for_external_harness(next_state)
@@ -490,6 +529,7 @@ def build_apply_graph(
             "current_url": external_state.current_url,
         })
         return {
+            "session_key": active_session_key,
             "external_apply": external_state,
             "current_step": current_step,
             "status": status,
@@ -536,13 +576,44 @@ def build_apply_graph(
                 "targets": sorted(external_answers.keys()),
                 "question_keys": sorted(external_question_answers.keys()),
             })
-            external_state = await apply_external_user_answers(
-                tool_client,
-                session_key=state.session_key,
-                external_state=state.external_apply,
-                answers_by_element_id=external_answers,
-                answers_by_question_key=external_question_answers,
-            )
+            active_session_key = state.session_key
+            external_state = state.external_apply
+            try:
+                external_state = await apply_external_user_answers(
+                    tool_client,
+                    session_key=state.session_key,
+                    external_state=external_state,
+                    answers_by_element_id=external_answers,
+                    answers_by_question_key=external_question_answers,
+                )
+            except (BrowserToolError, ToolServiceError) as exc:
+                if not is_session_lost_browser_error(exc):
+                    return {"status": "failed", "error": str(exc)}
+                log.warning("[external_gate] session_not_found while applying user answers — attempting recovery")
+                recovered = await recover_external_session(
+                    tool_client,
+                    state=state,
+                    app_repo=app_repo,
+                    session_repo=session_repo,
+                )
+                if recovered is None:
+                    return {
+                        "status": "paused",
+                        "pause_reason": "session_lost",
+                        "error": "Browser session was lost while applying your external answers. Envoy could not recover it automatically.",
+                    }
+                realigned_state = realign_external_state_to_observation(
+                    external_state.model_copy(update={"completed_actions": [], "last_action_result": None, "risk_flags": [], "error": None}),
+                    recovered.observation,
+                )
+                external_state = await apply_external_user_answers(
+                    tool_client,
+                    session_key=recovered.session_key,
+                    external_state=realigned_state,
+                    answers_by_element_id=external_answers,
+                    answers_by_question_key=external_question_answers,
+                )
+                active_session_key = recovered.session_key
             next_state = state.model_copy(update={"external_apply": external_state})
             status, pause_reason = _status_for_external_harness(next_state)
             current_url = external_state.current_url or (state.current_step.page_url if state.current_step else "")
@@ -558,6 +629,7 @@ def build_apply_graph(
                 )
             )
             return {
+                "session_key": active_session_key,
                 "external_apply": external_state,
                 "current_step": current_step,
                 "proposed_values": {},

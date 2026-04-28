@@ -69,18 +69,18 @@ export function ExternalUserQuestionsPanel({
   const canSubmit = keyedQuestions.every(({ key, mode }) => mode === "consent" || mode === "review" || Boolean(values[key]?.trim()));
 
   return (
-    <div style={{ marginTop: 12, padding: "0.85rem", background: "#ffffff", border: "1px solid #fed7aa", borderRadius: 6 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "#7c2d12", marginBottom: "0.75rem" }}>
+    <div style={{ marginTop: 12, padding: "0.85rem", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.75rem" }}>
         {questions.length === 1 ? "Question" : "Questions"}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
         {keyedQuestions.map(({ key, mode, question }) => (
           <div key={key}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#7c2d12", marginBottom: "0.45rem" }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.45rem" }}>
               {question.question}
             </label>
             {question.context && (
-              <div style={{ fontSize: 12, color: "#9a3412", marginBottom: "0.6rem", whiteSpace: "pre-wrap" }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: "0.6rem", whiteSpace: "pre-wrap" }}>
                 {question.context}
               </div>
             )}
@@ -94,10 +94,12 @@ export function ExternalUserQuestionsPanel({
                   width: "100%",
                   boxSizing: "border-box",
                   padding: "0.7rem 0.75rem",
-                  border: "1px solid #fdba74",
+                  border: "1px solid var(--border)",
                   borderRadius: 6,
                   fontSize: 14,
                   marginBottom: question.suggested_answers.length > 0 ? "0.75rem" : 0,
+                  background: "var(--surface-subtle)",
+                  color: "var(--text-primary)",
                 }}
                 type={mode === "password" ? "password" : mode === "email" ? "email" : "text"}
                 value={values[key] ?? ""}
@@ -112,9 +114,9 @@ export function ExternalUserQuestionsPanel({
                     style={{
                       padding: "0.35rem 0.65rem",
                       borderRadius: 6,
-                      border: "1px solid #fdba74",
-                      background: values[key] === answer ? "#ffedd5" : "#fff7ed",
-                      color: "#9a3412",
+                      border: "1px solid var(--border)",
+                      background: values[key] === answer ? "var(--selected-bg)" : "var(--surface-muted)",
+                      color: "var(--text-primary)",
                       cursor: "pointer",
                       fontSize: 12,
                     }}
@@ -126,7 +128,7 @@ export function ExternalUserQuestionsPanel({
               </div>
             )}
             {(mode === "consent" || mode === "review") && (
-              <div style={{ fontSize: 12, color: "#9a3412" }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                 {hintForMode(mode)}
               </div>
             )}

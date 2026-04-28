@@ -20,6 +20,17 @@ log = logging.getLogger("browser_client")
 class BrowserToolError(Exception):
     """Raised when tools/ returns status='error' for a browser operation."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str | None = None,
+        operation: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_type = error_type
+        self.operation = operation
+
 
 def _require_ok(env, operation: str) -> dict:
     """Unwrap envelope.data or raise BrowserToolError."""
@@ -28,9 +39,14 @@ def _require_ok(env, operation: str) -> dict:
         if env.artifacts:
             paths = ", ".join(f"{artifact.type}:{artifact.path}" for artifact in env.artifacts)
             artifact_text = f" artifacts={paths}"
-        raise BrowserToolError(f"{operation} failed: {env.error}{artifact_text}")
+        error_type = env.error.type if env.error is not None else None
+        raise BrowserToolError(
+            f"{operation} failed: {env.error}{artifact_text}",
+            error_type=error_type,
+            operation=operation,
+        )
     if env.data is None:
-        raise BrowserToolError(f"{operation} returned no data")
+        raise BrowserToolError(f"{operation} returned no data", operation=operation)
     return env.data  # type: ignore[return-value]
 
 
@@ -130,6 +146,13 @@ async def execute_external_apply_action(
         result.navigated,
         len(result.errors),
     )
+    if result.artifacts:
+        log.warning(
+            "[execute_external_apply_action] artifacts=%s",
+            ", ".join(f"{artifact.type}:{artifact.path}" for artifact in result.artifacts),
+        )
+    if result.diagnostics:
+        log.warning("[execute_external_apply_action] diagnostics=%s", result.diagnostics)
     return result
 
 
