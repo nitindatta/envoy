@@ -4,6 +4,7 @@ from app.services.external_apply_harness import (
     apply_external_user_answer,
     apply_external_user_answers,
     plan_external_apply_step,
+    realign_external_state_to_observation,
     run_external_apply_step,
 )
 from app.services.external_apply_policy import validate_external_apply_action
@@ -453,6 +454,149 @@ async def test_run_external_apply_step_does_not_click_after_batch_fills() -> Non
     assert state.completed_actions[-1].proposed_action.action_type == "fill_text"
 
 
+async def test_run_external_apply_step_reobserves_and_clicks_after_page_mutation() -> None:
+    observations = [
+        PageObservation(
+            url="https://ats.example/apply",
+            page_type="form",
+            fields=[ObservedField(element_id="field_1", label="First name", field_type="text")],
+            buttons=[ObservedAction(element_id="button_next", label="Next", kind="button")],
+        ),
+        PageObservation(
+            url="https://ats.example/apply",
+            page_type="form",
+            fields=[ObservedField(element_id="field_1", label="First name", field_type="text", current_value="Nitin")],
+            buttons=[ObservedAction(element_id="button_next", label="Next", kind="button")],
+        ),
+    ]
+    observe_calls = 0
+
+    async def observe(_client: Any, _session_key: str) -> PageObservation:
+        nonlocal observe_calls
+        observe_calls += 1
+        return observations[min(observe_calls - 1, len(observations) - 1)]
+
+    async def planner(_settings: Any, **kwargs: Any) -> ProposedAction:
+        observation = kwargs["observation"]
+        if observation.fields[0].current_value:
+            return ProposedAction(
+                action_type="click",
+                element_id="button_next",
+                confidence=0.96,
+                risk="low",
+                reason="Continue after the page fields are complete.",
+                source="page",
+            )
+        return ProposedAction(
+            action_type="fill_text",
+            element_id="field_1",
+            value="Nitin",
+            confidence=0.96,
+            risk="low",
+            reason="First name comes from profile.",
+            source="profile",
+        )
+
+    def policy(**_kwargs: Any) -> PolicyDecision:
+        return PolicyDecision(decision="allowed", reason="safe")
+
+    executed: list[str | None] = []
+
+    async def execute(_client: Any, _session_key: str, action: ProposedAction) -> ActionResult:
+        executed.append(action.element_id)
+        return ActionResult(
+            ok=True,
+            action_type=action.action_type,
+            element_id=action.element_id,
+            value_after=action.value,
+            new_url="https://ats.example/apply/next" if action.action_type == "click" else "https://ats.example/apply",
+            navigated=action.action_type == "click",
+        )
+
+    state = await run_external_apply_step(
+        DummySettings(),  # type: ignore[arg-type]
+        DummyToolClient(),  # type: ignore[arg-type]
+        session_key="session-1",
+        application_id="app-1",
+        profile_facts={"first_name": "Nitin"},
+        observe_fn=observe,
+        planner_fn=planner,
+        policy_fn=policy,
+        execute_fn=execute,
+    )
+
+    assert observe_calls == 2
+    assert executed == ["field_1", "button_next"]
+    assert state.status == "running"
+    assert state.last_action_result is not None
+    assert state.last_action_result.action_type == "click"
+    assert state.current_url == "https://ats.example/apply/next"
+
+
+async def test_run_external_apply_step_pauses_before_click_when_required_fields_are_incomplete() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        page_type="form",
+        errors=["Please answer the required questions before continuing."],
+        fields=[
+            ObservedField(
+                element_id="field_1",
+                label="Have you previously worked here?",
+                field_type="radio",
+                required=True,
+                options=["Yes", "No"],
+            ),
+            ObservedField(
+                element_id="field_2",
+                label="Phone Device Type",
+                field_type="select",
+                required=True,
+                options=["Mobile", "Landline"],
+            ),
+        ],
+        buttons=[ObservedAction(element_id="button_next", label="Create Account", kind="submit")],
+    )
+
+    async def observe(_client: Any, _session_key: str) -> PageObservation:
+        return observation
+
+    async def planner(_settings: Any, **_kwargs: Any) -> ProposedAction:
+        return ProposedAction(
+            action_type="click",
+            element_id="button_next",
+            confidence=0.95,
+            risk="low",
+            reason="Continue after filling the account form.",
+            source="page",
+        )
+
+    def policy(**_kwargs: Any) -> PolicyDecision:
+        raise AssertionError("policy should not be called when required fields are still incomplete")
+
+    async def execute(_client: Any, _session_key: str, _action: ProposedAction) -> ActionResult:
+        raise AssertionError("execute should not be called when required fields are still incomplete")
+
+    state = await run_external_apply_step(
+        DummySettings(),  # type: ignore[arg-type]
+        DummyToolClient(),  # type: ignore[arg-type]
+        session_key="session-1",
+        application_id="app-1",
+        profile_facts={},
+        observe_fn=observe,
+        planner_fn=planner,
+        policy_fn=policy,
+        execute_fn=execute,
+    )
+
+    assert state.status == "paused_for_user"
+    assert state.pending_user_question is not None
+    assert state.pending_user_question.target_element_id == "field_1"
+    assert [question.target_element_id for question in state.pending_user_questions] == ["field_1", "field_2"]
+    assert "required fields" in state.pending_user_question.context.lower()
+    assert "required_fields_incomplete" in state.risk_flags
+    assert state.completed_actions[-1].policy_decision == "paused"
+
+
 async def test_run_external_apply_step_pauses_on_repeated_non_navigating_click_on_same_page() -> None:
     observation = PageObservation(
         url="https://ats.example/login",
@@ -526,6 +670,115 @@ async def test_run_external_apply_step_pauses_on_repeated_non_navigating_click_o
     assert "stale_repeated_click" in state.risk_flags
     assert state.completed_actions[-1].policy_decision == "paused"
     assert state.completed_actions[-1].result is None
+
+
+async def test_run_external_apply_step_waits_for_delayed_transition_before_pausing_on_repeated_click() -> None:
+    login_observation = PageObservation(
+        url="https://ats.example/login",
+        page_type="login",
+        errors=["current step 1 of 5", "step 2 of 5"],
+        fields=[
+            ObservedField(element_id="field_email", label="Email", field_type="text", current_value="nitin@example.com"),
+            ObservedField(element_id="field_password", label="Password", field_type="password", current_value="secret"),
+        ],
+        buttons=[ObservedAction(element_id="button_11", label="Create Account", kind="submit")],
+    )
+    form_observation = PageObservation(
+        url="https://ats.example/apply",
+        page_type="form",
+        fields=[ObservedField(element_id="field_first_name", label="Given Name*", field_type="text")],
+        buttons=[ObservedAction(element_id="button_next", label="Save and Continue", kind="submit")],
+    )
+    prior_click = ActionTrace(
+        observation=login_observation,
+        proposed_action=ProposedAction(
+            action_type="click",
+            element_id="button_11",
+            confidence=0.97,
+            risk="low",
+            reason="Submit the account-creation form.",
+            source="page",
+        ),
+        policy_decision="allowed",
+        result=ActionResult(
+            ok=True,
+            action_type="click",
+            element_id="button_11",
+            message="action executed",
+            navigated=False,
+            new_url="https://ats.example/login",
+            errors=["current step 1 of 5", "step 2 of 5"],
+        ),
+    )
+
+    observe_calls = 0
+
+    async def observe(_client: Any, _session_key: str) -> PageObservation:
+        nonlocal observe_calls
+        observe_calls += 1
+        if observe_calls == 1:
+            return login_observation
+        return form_observation
+
+    async def planner(_settings: Any, **kwargs: Any) -> ProposedAction:
+        observation = kwargs["observation"]
+        if observation.page_type == "login":
+            return ProposedAction(
+                action_type="click",
+                element_id="button_11",
+                confidence=0.96,
+                risk="low",
+                reason="Submit the account-creation form.",
+                source="page",
+            )
+        return ProposedAction(
+            action_type="fill_text",
+            element_id="field_first_name",
+            value="Nitin",
+            confidence=0.96,
+            risk="low",
+            reason="Given name comes from profile.",
+            source="profile",
+        )
+
+    def policy(**_kwargs: Any) -> PolicyDecision:
+        return PolicyDecision(decision="allowed", reason="safe")
+
+    executed: list[tuple[str, str | None]] = []
+
+    async def execute(_client: Any, _session_key: str, action: ProposedAction) -> ActionResult:
+        executed.append((action.action_type, action.element_id))
+        return ActionResult(
+            ok=True,
+            action_type=action.action_type,
+            element_id=action.element_id,
+            value_after=action.value,
+            new_url=form_observation.url,
+            navigated=False,
+            errors=[],
+        )
+
+    async def sleep(_seconds: float) -> None:
+        return None
+
+    state = await run_external_apply_step(
+        DummySettings(),  # type: ignore[arg-type]
+        DummyToolClient(),  # type: ignore[arg-type]
+        session_key="session-1",
+        application_id="app-1",
+        profile_facts={"first_name": "Nitin"},
+        recent_actions=[prior_click],
+        observe_fn=observe,
+        planner_fn=planner,
+        policy_fn=policy,
+        execute_fn=execute,
+        sleep_fn=sleep,
+    )
+
+    assert observe_calls >= 2
+    assert state.status == "running"
+    assert state.pending_user_question is None
+    assert executed == [("fill_text", "field_first_name")]
 
 
 async def test_run_external_apply_step_still_pauses_on_stale_click_after_generic_resume_approval() -> None:
@@ -1110,6 +1363,98 @@ async def test_apply_external_user_answer_checks_confirmed_checkbox() -> None:
     assert updated.completed_actions[-1].proposed_action.action_type == "set_checkbox"
 
 
+async def test_run_external_apply_step_reuses_recent_user_answer_when_field_id_changes() -> None:
+    previous_observation = PageObservation(
+        url="https://ats.example/apply",
+        page_type="form",
+        fields=[
+            ObservedField(
+                element_id="field_old",
+                label="Expected salary",
+                field_type="text",
+            )
+        ],
+    )
+    recent_user_answer = ActionTrace(
+        observation=previous_observation,
+        proposed_action=ProposedAction(
+            action_type="fill_text",
+            element_id="field_old",
+            value="120000",
+            confidence=1.0,
+            risk="medium",
+            reason="User explicitly answered the paused external-apply question.",
+            source="user",
+        ),
+        policy_decision="allowed",
+        result=ActionResult(
+            ok=True,
+            action_type="fill_text",
+            element_id="field_old",
+            value_after="120000",
+            new_url="https://ats.example/apply",
+        ),
+    )
+
+    async def observe(_client: Any, _session_key: str) -> PageObservation:
+        return PageObservation(
+            url="https://ats.example/apply",
+            page_type="form",
+            fields=[
+                ObservedField(
+                    element_id="field_new",
+                    label="Expected salary",
+                    field_type="text",
+                    required=True,
+                )
+            ],
+        )
+
+    async def planner(_settings: Any, **kwargs: Any) -> ProposedAction:
+        approved_memory = kwargs["approved_memory"]
+        assert any(
+            item.get("label") == "Expected salary" and item.get("answer") == "120000"
+            for item in approved_memory
+        )
+        return ProposedAction(
+            action_type="fill_text",
+            element_id="field_new",
+            value="120000",
+            confidence=0.95,
+            risk="medium",
+            reason="Reuse the approved user answer for the same field label.",
+            source="memory",
+        )
+
+    async def execute(_client: Any, _session_key: str, action: ProposedAction) -> ActionResult:
+        assert action.action_type == "fill_text"
+        assert action.element_id == "field_new"
+        assert action.value == "120000"
+        return ActionResult(
+            ok=True,
+            action_type="fill_text",
+            element_id="field_new",
+            value_after="120000",
+            new_url="https://ats.example/apply",
+        )
+
+    state = await run_external_apply_step(
+        DummySettings(),  # type: ignore[arg-type]
+        DummyToolClient(),  # type: ignore[arg-type]
+        session_key="session-1",
+        application_id="app-1",
+        profile_facts={},
+        recent_actions=[recent_user_answer],
+        observe_fn=observe,
+        planner_fn=planner,
+        execute_fn=execute,
+    )
+
+    assert state.status == "running"
+    assert state.pending_user_question is None
+    assert state.completed_actions[-1].proposed_action.source == "memory"
+
+
 async def test_apply_external_user_answers_records_generic_consent_approval() -> None:
     observation = PageObservation(
         url="https://workday.example/login",
@@ -1249,3 +1594,48 @@ async def test_run_external_apply_step_uses_prior_generic_consent_approval_when_
 
     assert state.status == "running"
     assert state.completed_actions[-1].proposed_action.action_type == "set_checkbox"
+
+
+def test_realign_external_state_to_observation_rebinds_pending_question_targets() -> None:
+    original_observation = PageObservation(
+        url="https://ats.example/apply/contact",
+        page_type="form",
+        fields=[
+            ObservedField(
+                element_id="field_9",
+                label="Phone Device Type*",
+                field_type="select",
+                options=["Mobile", "Landline"],
+            )
+        ],
+    )
+    updated_observation = PageObservation(
+        url="https://ats.example/apply/contact",
+        page_type="form",
+        fields=[
+            ObservedField(
+                element_id="field_23",
+                label="Phone Device Type*",
+                field_type="select",
+                options=["Mobile", "Landline", "Work"],
+            )
+        ],
+    )
+    pending_question = UserQuestion(
+        question="What should I select for: Phone Device Type*?",
+        target_element_id="field_9",
+        suggested_answers=["Mobile", "Landline"],
+    )
+    external_state = ExternalApplyState(
+        application_id="app-1",
+        observation=original_observation,
+        pending_user_question=pending_question,
+        pending_user_questions=[pending_question],
+    )
+
+    rebound = realign_external_state_to_observation(external_state, updated_observation)
+
+    assert rebound.observation == updated_observation
+    assert rebound.pending_user_question is not None
+    assert rebound.pending_user_question.target_element_id == "field_23"
+    assert rebound.pending_user_question.suggested_answers == ["Mobile", "Landline", "Work"]

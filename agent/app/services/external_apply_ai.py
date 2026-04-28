@@ -44,6 +44,14 @@ _SENSITIVE_WORDS = {
     "background check",
     "declaration",
 }
+_NONFINAL_APPLY_LABELS = re.compile(
+    r"\b(apply(?: now| manually)?|start application|begin application|continue application|continue applying)\b"
+)
+_ACCOUNT_CREATION_LABELS = re.compile(r"\b(create account|register|sign up|sign-up)\b")
+_NAVIGATION_LABELS = re.compile(r"\b(continue|next|save and continue|proceed)\b")
+_LOGIN_LABELS = re.compile(r"\b(sign in|sign-in|log in|login)\b")
+_FINAL_SUBMIT_LABELS = re.compile(r"\b(submit|send application)\b")
+_FINAL_APPLY_LABELS = re.compile(r"\bapply now\b")
 
 
 def _build_client(settings: Settings) -> AsyncOpenAI:
@@ -363,7 +371,7 @@ def fallback_proposed_action(
         )
 
     for field in observation.fields:
-        if field.disabled or field.current_value:
+        if field.disabled or (field.current_value and not getattr(field, "invalid", False)):
             continue
         label = field.label.lower()
         if _is_sensitive(label):
@@ -380,28 +388,22 @@ def fallback_proposed_action(
         if value:
             return _action_for_field(field.element_id, field.field_type, value, source)
 
-    for button in observation.buttons:
-        label = button.label.lower()
-        if button.disabled:
+    for action in _iter_unique_observed_actions(observation):
+        if action.disabled:
             continue
-        if re.search(r"\b(submit|apply now|send application)\b", label):
+        if _is_final_submit_action(action, observation):
             return ProposedAction(
                 action_type="stop_ready_to_submit",
-                element_id=button.element_id,
+                element_id=action.element_id,
                 confidence=0.9,
                 risk="high",
                 reason="Final submission must go through the portal approval gate.",
                 source="page",
             )
-        if re.search(r"\b(continue|next|save and continue)\b", label):
-            return ProposedAction(
-                action_type="click",
-                element_id=button.element_id,
-                confidence=0.65,
-                risk="medium",
-                reason="No safe fillable fields were found; this looks like a navigation button.",
-                source="page",
-            )
+
+    navigation_action = _fallback_navigation_action(observation)
+    if navigation_action is not None:
+        return navigation_action
 
     return ProposedAction(
         action_type="ask_user",
@@ -425,7 +427,7 @@ def fallback_proposed_actions(
     user_questions: list[ProposedAction] = []
 
     for field in observation.fields:
-        if field.disabled or field.current_value:
+        if field.disabled or (field.current_value and not getattr(field, "invalid", False)):
             continue
         label = field.label.lower()
         if _is_sensitive(label):
@@ -530,8 +532,77 @@ def _observed_element_ids(observation: PageObservation) -> set[str]:
     }
 
 
+def _iter_unique_observed_actions(observation: PageObservation) -> list[Any]:
+    seen_ids: set[str] = set()
+    deduped: list[Any] = []
+    for action in [*observation.buttons, *observation.links]:
+        if action.element_id in seen_ids:
+            continue
+        seen_ids.add(action.element_id)
+        deduped.append(action)
+    return deduped
+
+
 def _is_sensitive(label: str) -> bool:
     return any(word in label for word in _SENSITIVE_WORDS)
+
+
+def _is_final_submit_action(action: Any, observation: PageObservation) -> bool:
+    label = action.label.lower()
+    if _FINAL_SUBMIT_LABELS.search(label):
+        return True
+    if not _FINAL_APPLY_LABELS.search(label):
+        return False
+    return observation.page_type in {"review", "final_submit"}
+
+
+def _fallback_navigation_action(observation: PageObservation) -> ProposedAction | None:
+    best_action: Any | None = None
+    best_score = 0
+    for action in _iter_unique_observed_actions(observation):
+        if action.disabled:
+            continue
+        score = _navigation_action_score(action, observation)
+        if score <= best_score:
+            continue
+        best_action = action
+        best_score = score
+    if best_action is None:
+        return None
+    return ProposedAction(
+        action_type="click",
+        element_id=best_action.element_id,
+        confidence=0.68,
+        risk="medium",
+        reason="No safe fillable fields were found; this looks like the next application step.",
+        source="page",
+    )
+
+
+def _navigation_action_score(action: Any, observation: PageObservation) -> int:
+    label = action.label.lower()
+    href = (action.href or "").lower()
+
+    if _NONFINAL_APPLY_LABELS.search(label):
+        score = 100
+    elif _ACCOUNT_CREATION_LABELS.search(label):
+        score = 90
+    elif _NAVIGATION_LABELS.search(label):
+        score = 80
+    elif _LOGIN_LABELS.search(label):
+        score = 70
+    else:
+        return 0
+
+    if href and "/apply" in href:
+        score += 5
+    if href and "/login" in href and score < 90:
+        score -= 5
+    if observation.page_type == "login" and _LOGIN_LABELS.search(label):
+        score += 10
+    if observation.page_type == "unknown" and _NONFINAL_APPLY_LABELS.search(label):
+        score += 5
+    return score
 
 
 def _looks_like_job_search_page(observation: PageObservation) -> bool:

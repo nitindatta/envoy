@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from collections.abc import Awaitable, Callable
@@ -36,6 +37,8 @@ PlanFn = Callable[..., Awaitable[ProposedAction]]
 BatchPlanFn = Callable[..., Awaitable[list[ProposedAction]]]
 PolicyFn = Callable[..., PolicyDecision]
 ExecuteFn = Callable[[ToolClient, str, ProposedAction], Awaitable[ActionResult]]
+SleepFn = Callable[[float], Awaitable[None]]
+MAX_TRANSACTION_PASSES = 3
 
 
 async def plan_external_apply_step(
@@ -55,11 +58,12 @@ async def plan_external_apply_step(
     memory = approved_memory or []
     traces = recent_actions or []
     observation = await observe_fn(tool_client, session_key)
+    effective_memory = _approved_memory_with_recent_answers(memory, traces)
     proposed_action = await planner_fn(
         settings,
         observation=observation,
         profile_facts=profile_facts,
-        approved_memory=memory,
+        approved_memory=effective_memory,
         recent_actions=traces,
     )
 
@@ -100,6 +104,7 @@ async def run_external_apply_step(
     batch_planner_fn: BatchPlanFn | None = None,
     policy_fn: PolicyFn = validate_external_apply_action,
     execute_fn: ExecuteFn = execute_external_apply_action,
+    sleep_fn: SleepFn = asyncio.sleep,
 ) -> ExternalApplyState:
     """Run one observe-plan-policy-execute step or one safe page-level batch.
 
@@ -107,212 +112,384 @@ async def run_external_apply_step(
     decision="allowed". Paused/rejected actions are returned as state for the
     portal or workflow to handle.
     """
-
     memory = approved_memory or []
-    traces = list(recent_actions or [])
+    completed_actions = list(recent_actions or [])
+    current_url = (
+        completed_actions[-1].result.new_url
+        if completed_actions and completed_actions[-1].result and completed_actions[-1].result.new_url
+        else ""
+    )
+    last_result: ActionResult | None = None
     observation = await observe_fn(tool_client, session_key)
-    _emit("observe", f"observe: {observation.page_type} @ {observation.url[:70]}", {
-        "url": observation.url,
-        "page_type": observation.page_type,
-        "fields_count": len(observation.fields),
-        "buttons_count": len(observation.buttons),
-        "fields": [{"id": f.element_id, "label": f.label, "type": f.field_type} for f in observation.fields[:10]],
-        "buttons": [{"id": b.element_id, "label": b.label} for b in observation.buttons[:6]],
-        "visible_text": (observation.visible_text or "")[:200],
-    })
-    preapproved_consent_action = _preapproved_generic_consent_action(observation, traces, profile_facts)
-    if preapproved_consent_action is not None:
-        actions = [preapproved_consent_action]
-    else:
-        effective_batch_planner = batch_planner_fn
-        if effective_batch_planner is None and planner_fn is propose_external_apply_action:
-            effective_batch_planner = propose_external_apply_actions
 
-        if effective_batch_planner is not None:
-            actions = await effective_batch_planner(
-                settings,
-                observation=observation,
-                profile_facts=profile_facts,
-                approved_memory=memory,
-                recent_actions=traces,
-            )
-        else:
+    for transaction_pass in range(MAX_TRANSACTION_PASSES):
+        _emit("observe", f"observe: {observation.page_type} @ {observation.url[:70]}", {
+            "url": observation.url,
+            "page_type": observation.page_type,
+            "fields_count": len(observation.fields),
+            "buttons_count": len(observation.buttons),
+            "fields": [
+                {
+                    "id": f.element_id,
+                    "label": f.label,
+                    "type": f.field_type,
+                    "control_kind": f.control_kind,
+                    "invalid": f.invalid,
+                    "validation_message": f.validation_message,
+                }
+                for f in observation.fields[:10]
+            ],
+            "buttons": [{"id": b.element_id, "label": b.label} for b in observation.buttons[:6]],
+            "visible_text": (observation.visible_text or "")[:200],
+            "transaction_pass": transaction_pass + 1,
+        })
+
+        actions = await _planned_actions_for_observation(
+            settings,
+            observation=observation,
+            profile_facts=profile_facts,
+            approved_memory=memory,
+            recent_actions=completed_actions,
+            planner_fn=planner_fn,
+            batch_planner_fn=batch_planner_fn,
+        )
+        if not actions:
             actions = [
-                await planner_fn(
-                    settings,
-                    observation=observation,
-                    profile_facts=profile_facts,
-                    approved_memory=memory,
-                    recent_actions=traces,
+                ProposedAction(
+                    action_type="ask_user",
+                    question="I could not determine a safe next action on this page. What should I do next?",
+                    confidence=0.75,
+                    risk="medium",
+                    reason="Planner returned no actions.",
+                    source="page",
                 )
             ]
 
-    if not actions:
-        actions = [
-            ProposedAction(
-                action_type="ask_user",
-                question="I could not determine a safe next action on this page. What should I do next?",
-                confidence=0.75,
-                risk="medium",
-                reason="Planner returned no actions.",
-                source="page",
-            )
-        ]
+        last_state: ExternalApplyState | None = None
+        mutated_current_page = False
+        delayed_transition_observation: PageObservation | None = None
 
-    completed_actions = traces
-    current_url = observation.url
-    last_result: ActionResult | None = None
-    last_state: ExternalApplyState | None = None
-    mutated_current_page = False
+        for index, action in enumerate(actions):
+            _emit("plan", f"plan: {action.action_type}", {
+                "action_type": action.action_type,
+                "element_id": action.element_id,
+                "value": (action.value or "")[:80],
+                "confidence": action.confidence,
+                "risk": action.risk,
+                "reason": action.reason,
+                "source": action.source,
+                "question": action.question,
+            })
+            if action.action_type == "click" and mutated_current_page and last_state is not None:
+                break
 
-    for index, action in enumerate(actions):
-        _emit("plan", f"plan: {action.action_type}", {
-            "action_type": action.action_type,
-            "element_id": action.element_id,
-            "value": (action.value or "")[:80],
-            "confidence": action.confidence,
-            "risk": action.risk,
-            "reason": action.reason,
-            "source": action.source,
-            "question": action.question,
-        })
-        if action.action_type == "click" and mutated_current_page and last_state is not None:
-            return last_state
-
-        planned = ExternalApplyState(
-            application_id=application_id,
-            current_url=current_url,
-            page_type=observation.page_type,
-            observation=observation,
-            proposed_action=action,
-            completed_actions=completed_actions,
-            status=_status_for_proposed_action(action),
-            submit_ready=action.action_type == "stop_ready_to_submit",
-            pending_user_question=_user_question_for_action(action, observation),
-            pending_user_questions=_pending_question_list(_user_question_for_action(action, observation)),
-            last_action_result=last_result,
-        )
-        planned = _apply_default_safe_action(planned, profile_facts)
-        planned = _coerce_noncritical_select_option(planned)
-        if planned.proposed_action is None:
-            return planned
-        stale_click_question = _stale_repeated_click_question(
-            observation,
-            planned.proposed_action,
-            completed_actions,
-        )
-        if stale_click_question is not None:
-            trace = ActionTrace(
+            planned = ExternalApplyState(
+                application_id=application_id,
+                current_url=current_url or observation.url,
+                page_type=observation.page_type,
                 observation=observation,
-                proposed_action=planned.proposed_action,
-                policy_decision="paused",
-                result=None,
+                proposed_action=action,
+                completed_actions=completed_actions,
+                status=_status_for_proposed_action(action),
+                submit_ready=action.action_type == "stop_ready_to_submit",
+                pending_user_question=_user_question_for_action(action, observation),
+                pending_user_questions=_pending_question_list(_user_question_for_action(action, observation)),
+                last_action_result=last_result,
             )
-            return planned.model_copy(
-                update={
-                    "completed_actions": [*completed_actions, trace],
-                    "status": "paused_for_user",
-                    "pending_user_question": stale_click_question,
-                    "pending_user_questions": [stale_click_question],
-                    "risk_flags": [*planned.risk_flags, "stale_repeated_click"],
-                    "submit_ready": False,
-                    "error": None,
-                }
+            planned = _apply_default_safe_action(planned, profile_facts)
+            planned = _coerce_noncritical_select_option(planned)
+            if planned.proposed_action is None:
+                return planned
+
+            delayed_transition_observation = await _observe_delayed_transition_after_repeated_click(
+                observation,
+                planned.proposed_action,
+                completed_actions,
+                tool_client,
+                session_key,
+                observe_fn,
+                sleep_fn,
             )
+            if delayed_transition_observation is not None:
+                current_url = delayed_transition_observation.url or current_url or observation.url
+                last_state = planned.model_copy(
+                    update={
+                        "current_url": current_url,
+                        "page_type": delayed_transition_observation.page_type,
+                        "observation": delayed_transition_observation,
+                        "last_action_result": last_result,
+                        "status": "running",
+                        "error": None,
+                        "pending_user_question": None,
+                        "pending_user_questions": [],
+                        "submit_ready": False,
+                    }
+                )
+                break
 
-        policy = policy_fn(
-            observation=observation,
-            proposed_action=planned.proposed_action,
-            profile_facts=profile_facts,
-        )
-        _emit("policy", f"policy: {policy.decision}", {
-            "decision": policy.decision,
-            "pause_reason": policy.pause_reason,
-            "risk_flags": policy.risk_flags,
-            "reason": policy.reason,
-        })
-
-        if policy.decision != "allowed":
-            pending_questions = _user_questions_for_pause(
+            required_field_questions = _required_field_questions_before_click(
                 observation,
                 planned.proposed_action,
                 actions[index + 1 :],
-                policy,
             )
+            if required_field_questions:
+                trace = ActionTrace(
+                    observation=observation,
+                    proposed_action=planned.proposed_action,
+                    policy_decision="paused",
+                    result=None,
+                )
+                return planned.model_copy(
+                    update={
+                        "completed_actions": [*completed_actions, trace],
+                        "status": "paused_for_user",
+                        "pending_user_question": required_field_questions[0],
+                        "pending_user_questions": required_field_questions,
+                        "risk_flags": [*planned.risk_flags, "required_fields_incomplete"],
+                        "submit_ready": False,
+                        "error": None,
+                    }
+                )
+
+            stale_click_question = _stale_repeated_click_question(
+                observation,
+                planned.proposed_action,
+                completed_actions,
+            )
+            if stale_click_question is not None:
+                trace = ActionTrace(
+                    observation=observation,
+                    proposed_action=planned.proposed_action,
+                    policy_decision="paused",
+                    result=None,
+                )
+                return planned.model_copy(
+                    update={
+                        "completed_actions": [*completed_actions, trace],
+                        "status": "paused_for_user",
+                        "pending_user_question": stale_click_question,
+                        "pending_user_questions": [stale_click_question],
+                        "risk_flags": [*planned.risk_flags, "stale_repeated_click"],
+                        "submit_ready": False,
+                        "error": None,
+                    }
+                )
+
+            policy = policy_fn(
+                observation=observation,
+                proposed_action=planned.proposed_action,
+                profile_facts=profile_facts,
+            )
+            _emit("policy", f"policy: {policy.decision}", {
+                "decision": policy.decision,
+                "pause_reason": policy.pause_reason,
+                "risk_flags": policy.risk_flags,
+                "reason": policy.reason,
+            })
+
+            if policy.decision != "allowed":
+                pending_questions = _user_questions_for_pause(
+                    observation,
+                    planned.proposed_action,
+                    actions[index + 1 :],
+                    policy,
+                )
+                trace = ActionTrace(
+                    observation=observation,
+                    proposed_action=planned.proposed_action,
+                    policy_decision=policy.decision,
+                    result=None,
+                )
+                return planned.model_copy(
+                    update={
+                        "completed_actions": [*completed_actions, trace],
+                        "risk_flags": policy.risk_flags,
+                        "status": _status_for_policy_pause(policy, planned.proposed_action),
+                        "pending_user_question": pending_questions[0] if pending_questions else _user_question_for_policy(policy, planned.proposed_action, observation),
+                        "pending_user_questions": pending_questions,
+                        "submit_ready": policy.pause_reason == "final_submit",
+                        "error": policy.reason if policy.decision == "rejected" else None,
+                    }
+                )
+
+            result = await execute_fn(tool_client, session_key, planned.proposed_action)
+            _emit("execute", f"execute: {planned.proposed_action.action_type} -> {'ok' if result.ok else 'fail'}", {
+                "action_type": planned.proposed_action.action_type,
+                "element_id": planned.proposed_action.element_id,
+                "value": (planned.proposed_action.value or "")[:80],
+                "ok": result.ok,
+                "message": result.message,
+                "new_url": result.new_url,
+            })
             trace = ActionTrace(
                 observation=observation,
                 proposed_action=planned.proposed_action,
-                policy_decision=policy.decision,
-                result=None,
+                policy_decision="allowed",
+                result=result,
             )
-            return planned.model_copy(
+            completed_actions = [*completed_actions, trace]
+            current_url = result.new_url or current_url or observation.url
+            last_result = result
+            last_state = planned.model_copy(
                 update={
-                    "completed_actions": [*completed_actions, trace],
-                    "risk_flags": policy.risk_flags,
-                    "status": _status_for_policy_pause(policy, planned.proposed_action),
-                    "pending_user_question": pending_questions[0] if pending_questions else _user_question_for_policy(policy, planned.proposed_action, observation),
-                    "pending_user_questions": pending_questions,
-                    "submit_ready": policy.pause_reason == "final_submit",
-                    "error": policy.reason if policy.decision == "rejected" else None,
+                    "completed_actions": completed_actions,
+                    "last_action_result": result,
+                    "current_url": current_url,
+                    "status": "running" if result.ok else "failed",
+                    "error": None if result.ok else result.message,
+                    "risk_flags": result.errors,
+                    "pending_user_question": None,
+                    "pending_user_questions": [],
+                    "submit_ready": False,
                 }
             )
+            if not result.ok:
+                return last_state
 
-        result = await execute_fn(tool_client, session_key, planned.proposed_action)
-        _emit("execute", f"execute: {planned.proposed_action.action_type} -> {'ok' if result.ok else 'fail'}", {
-            "action_type": planned.proposed_action.action_type,
-            "element_id": planned.proposed_action.element_id,
-            "value": (planned.proposed_action.value or "")[:80],
-            "ok": result.ok,
-            "message": result.message,
-            "new_url": result.new_url,
-        })
-        trace = ActionTrace(
-            observation=observation,
-            proposed_action=planned.proposed_action,
-            policy_decision="allowed",
-            result=result,
-        )
-        completed_actions = [*completed_actions, trace]
-        current_url = result.new_url or current_url
-        last_result = result
-        last_state = planned.model_copy(
-            update={
-                "completed_actions": completed_actions,
-                "last_action_result": result,
-                "current_url": current_url,
-                "status": "running" if result.ok else "failed",
-                "error": None if result.ok else result.message,
-                "risk_flags": result.errors,
-                "pending_user_question": None,
-                "pending_user_questions": [],
-                "submit_ready": False,
-            }
-        )
-        if not result.ok:
+            if planned.proposed_action.action_type in {"fill_text", "select_option", "set_checkbox", "set_radio", "upload_file"}:
+                mutated_current_page = True
+
+            if planned.proposed_action.action_type == "click":
+                return last_state
+
+        if last_state is None:
+            first_action = actions[0]
+            return ExternalApplyState(
+                application_id=application_id,
+                current_url=current_url or observation.url,
+                page_type=observation.page_type,
+                observation=observation,
+                proposed_action=first_action,
+                completed_actions=completed_actions,
+                status=_status_for_proposed_action(first_action),
+                submit_ready=first_action.action_type == "stop_ready_to_submit",
+                pending_user_question=_user_question_for_action(first_action, observation),
+                pending_user_questions=_pending_question_list(_user_question_for_action(first_action, observation)),
+                last_action_result=last_result,
+            )
+
+        if delayed_transition_observation is not None:
+            observation = delayed_transition_observation
+            continue
+
+        if not mutated_current_page or transaction_pass + 1 >= MAX_TRANSACTION_PASSES:
             return last_state
 
-        if planned.proposed_action.action_type in {"fill_text", "select_option", "set_checkbox", "set_radio", "upload_file"}:
-            mutated_current_page = True
-
-        if planned.proposed_action.action_type == "click":
+        next_observation = await observe_fn(tool_client, session_key)
+        current_url = next_observation.url or current_url
+        if _same_page_shape(next_observation, observation):
             return last_state
+        observation = next_observation
 
-    if last_state is not None:
-        return last_state
-
-    first_action = actions[0]
     return ExternalApplyState(
         application_id=application_id,
-        current_url=current_url,
+        current_url=current_url or observation.url,
         page_type=observation.page_type,
         observation=observation,
-        proposed_action=first_action,
         completed_actions=completed_actions,
-        status=_status_for_proposed_action(first_action),
-        submit_ready=first_action.action_type == "stop_ready_to_submit",
-        pending_user_question=_user_question_for_action(first_action, observation),
-        pending_user_questions=_pending_question_list(_user_question_for_action(first_action, observation)),
+        status="running",
+        last_action_result=last_result,
     )
+
+
+async def _planned_actions_for_observation(
+    settings: Settings,
+    *,
+    observation: PageObservation,
+    profile_facts: dict[str, Any],
+    approved_memory: list[dict[str, Any]],
+    recent_actions: list[ActionTrace],
+    planner_fn: PlanFn,
+    batch_planner_fn: BatchPlanFn | None,
+) -> list[ProposedAction]:
+    preapproved_consent_action = _preapproved_generic_consent_action(observation, recent_actions, profile_facts)
+    if preapproved_consent_action is not None:
+        return [preapproved_consent_action]
+    effective_memory = _approved_memory_with_recent_answers(approved_memory, recent_actions)
+
+    effective_batch_planner = batch_planner_fn
+    if effective_batch_planner is None and planner_fn is propose_external_apply_action:
+        effective_batch_planner = propose_external_apply_actions
+
+    if effective_batch_planner is not None:
+        return await effective_batch_planner(
+            settings,
+            observation=observation,
+            profile_facts=profile_facts,
+            approved_memory=effective_memory,
+            recent_actions=recent_actions,
+        )
+
+    return [
+        await planner_fn(
+            settings,
+            observation=observation,
+            profile_facts=profile_facts,
+            approved_memory=effective_memory,
+            recent_actions=recent_actions,
+        )
+    ]
+
+
+def _approved_memory_with_recent_answers(
+    approved_memory: list[dict[str, Any]],
+    recent_actions: list[ActionTrace],
+) -> list[dict[str, Any]]:
+    """Promote successful user-sourced field answers into page-local memory.
+
+    External ATS pages often re-render controls and assign new element ids after a
+    pause. The browser action trace still has the old field label and user answer,
+    so we make that answer available to the planner for semantically matching
+    fields on the next observation.
+    """
+
+    memory = list(approved_memory)
+    seen = {
+        (
+            str(item.get("label") or item.get("question") or "").strip().lower(),
+            str(item.get("answer") or item.get("value") or "").strip().lower(),
+        )
+        for item in memory
+    }
+    for trace in recent_actions:
+        result = trace.result
+        if result is None or not result.ok:
+            continue
+        action = trace.proposed_action
+        if action.source != "user":
+            continue
+        if action.action_type not in {"fill_text", "select_option", "set_checkbox", "set_radio", "upload_file", "ask_user"}:
+            continue
+
+        label = ""
+        field_type = ""
+        if action.element_id:
+            field = _observed_field(trace.observation, action.element_id)
+            if field is not None:
+                label = field.label
+                field_type = field.field_type
+        if not label:
+            label = action.question or ""
+
+        answer = action.value or result.value_after or ""
+        if not label or not str(answer).strip():
+            continue
+
+        key = (label.strip().lower(), str(answer).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        memory.append(
+            {
+                "label": label,
+                "question": label,
+                "answer": str(answer),
+                "value": str(answer),
+                "field_type": field_type,
+                "source": "user",
+            }
+        )
+    return memory
 
 
 async def apply_external_user_answers(
@@ -381,6 +558,27 @@ async def apply_external_user_answers(
         )
 
     return current_state.model_copy(update={"pending_user_question": None, "pending_user_questions": []})
+
+
+def realign_external_state_to_observation(
+    external_state: ExternalApplyState,
+    observation: PageObservation,
+) -> ExternalApplyState:
+    questions = external_state.pending_user_questions or _pending_question_list(external_state.pending_user_question)
+    rebound_questions = [
+        _realign_user_question_to_observation(question, external_state.observation, observation)
+        for question in questions
+    ]
+    rebound_questions = [question for question in rebound_questions if question is not None]
+    return external_state.model_copy(
+        update={
+            "observation": observation,
+            "current_url": observation.url or external_state.current_url,
+            "page_type": observation.page_type,
+            "pending_user_question": rebound_questions[0] if rebound_questions else None,
+            "pending_user_questions": rebound_questions,
+        }
+    )
 
 
 async def apply_external_user_answer(
@@ -534,6 +732,49 @@ def _user_questions_for_pause(
     return questions
 
 
+def _required_field_questions_before_click(
+    observation: PageObservation,
+    action: ProposedAction,
+    remaining_actions: list[ProposedAction],
+) -> list[UserQuestion]:
+    if action.action_type != "click":
+        return []
+
+    planned_targets = {
+        candidate.element_id
+        for candidate in remaining_actions
+        if candidate.element_id and candidate.action_type in {"fill_text", "select_option", "set_checkbox", "set_radio", "upload_file", "ask_user"}
+    }
+    missing_fields = [
+        field
+        for field in observation.fields
+        if field.required
+        and field.visible
+        and not field.disabled
+        and field.element_id not in planned_targets
+        and not _field_has_useful_value(field)
+    ]
+    if not missing_fields:
+        return []
+
+    context_lines = [
+        "Required fields are still incomplete on the current page, so Envoy should not continue yet.",
+    ]
+    if observation.errors:
+        context_lines.extend(["Current page messages:", *observation.errors[:6]])
+    context = "\n".join(context_lines)
+    return [
+        UserQuestion(
+            question=_question_for_field(field),
+            context=context,
+            suggested_answers=field.options,
+            target_element_id=field.element_id,
+            question_key=_question_key_for_prompt(f"{field.element_id}|required", context),
+        )
+        for field in missing_fields
+    ]
+
+
 def _pending_question_list(question: UserQuestion | None) -> list[UserQuestion]:
     return [question] if question is not None else []
 
@@ -581,10 +822,83 @@ def _stale_repeated_click_question(
     )
 
 
+async def _observe_delayed_transition_after_repeated_click(
+    observation: PageObservation,
+    action: ProposedAction,
+    completed_actions: list[ActionTrace],
+    tool_client: ToolClient,
+    session_key: str,
+    observe_fn: ObserveFn,
+    sleep_fn: SleepFn,
+) -> PageObservation | None:
+    if action.action_type != "click" or not action.element_id or not completed_actions:
+        return None
+    previous = _most_recent_matching_click_trace(completed_actions, action.element_id)
+    if previous is None:
+        return None
+    previous_result = previous.result
+    if previous_result is None or not previous_result.ok or previous_result.navigated:
+        return None
+    if not _same_page_shape(observation, previous.observation):
+        return None
+    if not _looks_like_slow_transition_click(observation, action.element_id):
+        return None
+    if _has_substantive_page_errors(observation.errors) or _has_substantive_page_errors(previous_result.errors):
+        return None
+
+    for delay_seconds in (1.0, 2.0, 4.0):
+        await sleep_fn(delay_seconds)
+        next_observation = await observe_fn(tool_client, session_key)
+        if not _same_page_shape(next_observation, observation):
+            return next_observation
+    return None
+
+
 def _observed_field(observation: PageObservation | None, element_id: str | None) -> Any | None:
     if observation is None or not element_id:
         return None
     return next((field for field in observation.fields if field.element_id == element_id), None)
+
+
+def _realign_user_question_to_observation(
+    question: UserQuestion,
+    previous_observation: PageObservation | None,
+    current_observation: PageObservation,
+) -> UserQuestion | None:
+    if question.target_element_id is None:
+        return question
+
+    direct_match = _observed_field(current_observation, question.target_element_id)
+    if direct_match is not None:
+        return question.model_copy(update={"suggested_answers": direct_match.options})
+
+    previous_field = _observed_field(previous_observation, question.target_element_id)
+    target_label = (previous_field.label if previous_field is not None else _field_label_from_question(question.question)) or ""
+    normalized_target = _normalize_field_label(target_label)
+    if not normalized_target:
+        return None
+
+    for field in current_observation.fields:
+        if _normalize_field_label(field.label) != normalized_target:
+            continue
+        return question.model_copy(
+            update={
+                "target_element_id": field.element_id,
+                "suggested_answers": field.options,
+            }
+        )
+    return None
+
+
+def _field_label_from_question(question: str) -> str:
+    if ":" not in question:
+        return ""
+    _, remainder = question.split(":", 1)
+    return remainder.strip().rstrip("?")
+
+
+def _normalize_field_label(label: str) -> str:
+    return re.sub(r"\s+", " ", (label or "").strip().rstrip("*")).lower()
 
 
 def _question_for_field(field: Any) -> str:
@@ -629,6 +943,16 @@ def _field_shape(fields: list[Any]) -> list[tuple[str, str, bool, bool]]:
         )
         for field in fields
     ]
+
+
+def _looks_like_slow_transition_click(observation: PageObservation, element_id: str) -> bool:
+    label = (_observed_action_label(observation, element_id) or "").strip().lower()
+    return bool(re.search(r"\b(create account|sign in|sign-in|log in|login|save and continue|continue|next)\b", label))
+
+
+def _has_substantive_page_errors(errors: list[str]) -> bool:
+    progress_only = re.compile(r"^(current step \d+ of \d+|step \d+ of \d+)$", re.IGNORECASE)
+    return any(error.strip() and not progress_only.fullmatch(error.strip()) for error in errors)
 
 
 def _action_shape(actions: list[Any]) -> list[tuple[str, str, bool]]:
@@ -809,6 +1133,18 @@ def _usable_select_options(options: list[str]) -> list[str]:
 
 def _normalize_option_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().lower()
+
+
+def _field_has_useful_value(field: Any) -> bool:
+    if getattr(field, "invalid", False):
+        return False
+    value = (field.current_value or "").strip()
+    if not value:
+        return False
+    if (field.field_type or "").strip().lower() == "select":
+        if _normalize_option_text(value) in {"select", "select one", "choose", "choose one", "please select", "please choose"}:
+            return False
+    return True
 
 
 def _record_generic_prompt_ack(

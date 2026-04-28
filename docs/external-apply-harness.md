@@ -19,6 +19,68 @@ flowchart TD
 
 The LLM does not directly operate the browser. It proposes one structured action. Envoy validates and executes.
 
+## External Control Architecture
+
+The external browser stack should be generic control-pattern automation, not portal-specific flow automation. Workday, Greenhouse, Lever, SuccessFactors, and other ATS portals can provide useful pressure tests and small hints, but action execution should be driven by observed control behavior.
+
+The intended loop is:
+
+1. Observe the page and classify controls.
+2. Plan the value or command using profile facts, approved memory, and page context.
+3. Select an interaction strategy based on control metadata.
+4. Execute the action.
+5. Verify that the value or navigation actually stuck.
+6. Recover from validation errors when the answer is known, and pause only for missing authority or information.
+
+`field_type` remains the stable planner-facing action category: text, select, radio, checkbox, file, and related browser-safe types. `control_kind` is the lower-level browser interaction hint used by the executor. Examples include:
+
+- `native_text`
+- `native_select`
+- `native_checkbox`
+- `native_radio_group`
+- `aria_checkbox`
+- `aria_radio_group`
+- `aria_combobox`
+- `button_listbox`
+- `prompt_select`
+- `file_upload`
+
+Portal-specific code should be limited to classification or strategy ordering. For example, a Workday prompt select should still be represented as a generic `prompt_select` or `button_listbox` control. The executor may prioritize an owned-listbox strategy when a portal is known to use portaled listboxes, but it should not fork the whole apply flow by ATS.
+
+### Strategy Direction
+
+`executeExternalApplyAction(...)` remains the public tools endpoint, but the implementation should move toward small strategy modules:
+
+- target resolution
+- text controls
+- select/listbox/combobox controls
+- checkbox and radio controls
+- file uploads
+- click/navigation controls
+- post-action verification
+- diagnostics and artifact capture
+
+Each strategy should answer four questions: can it handle this control, how does it interact, how does it verify success, and what diagnostics does it emit when it fails.
+
+### Verification And Recovery
+
+Autonomy depends on verification more than clicks. Every action should converge on the same contract:
+
+```text
+resolve target -> interact -> verify -> observe errors -> return structured result
+```
+
+For selects, verification may use display text, selected option state, hidden input value, or a fresh observation. For text fields, verification should check the input value and any visible validation error. For submit/save clicks, the harness should detect whether navigation advanced; if the page stayed put, it should map validation errors back to fields and repair known answers before asking the user.
+
+### Migration Plan
+
+1. Add `control_kind` metadata to observations while preserving `field_type`.
+2. Extract select/dropdown behavior into a generic select control module.
+3. Convert current Workday-derived handling into generic owned-listbox, visible-listbox, prompt-select, and searchable-combobox strategies.
+4. Make action verification results explicit and shared across strategies.
+5. Add validation repair after save/continue clicks.
+6. Promote approved answers and profile defaults into a durable answer-memory layer.
+
 ## Provider Routing Contract
 
 Apply starts with a provider launch step, then branches by where the provider sends the browser:

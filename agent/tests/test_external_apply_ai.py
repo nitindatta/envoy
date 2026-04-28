@@ -4,6 +4,7 @@ from app.services.external_apply_ai import (
     build_external_apply_batch_planner_messages,
     build_external_apply_planner_messages,
     fallback_proposed_action,
+    fallback_proposed_actions,
     parse_planner_batch_response,
     parse_planner_response,
 )
@@ -72,6 +73,60 @@ def test_fallback_fills_safe_profile_field() -> None:
     assert action.element_id == "field_1"
     assert action.value == "nitin@example.com"
     assert action.source == "profile"
+
+
+def test_fallback_retries_invalid_field_even_when_it_has_a_value() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[
+            ObservedField(
+                element_id="field_postcode",
+                label="Postcode",
+                field_type="text",
+                current_value="abc",
+                invalid=True,
+                validation_message="Enter a valid postcode.",
+            )
+        ],
+    )
+
+    action = fallback_proposed_action(
+        observation,
+        {"address": {"postcode": "2000"}},
+        [],
+    )
+
+    assert action.action_type == "fill_text"
+    assert action.element_id == "field_postcode"
+    assert action.value == "2000"
+    assert action.source == "profile"
+
+
+def test_batch_fallback_retries_invalid_field_before_disabled_continue_pause() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[
+            ObservedField(
+                element_id="field_phone",
+                label="Phone Number",
+                field_type="phone",
+                current_value="bad",
+                invalid=True,
+                validation_message="Enter a valid phone number.",
+            )
+        ],
+        buttons=[ObservedAction(element_id="button_continue", label="Save and Continue", disabled=True)],
+    )
+
+    actions = fallback_proposed_actions(
+        observation,
+        {"phone": "0400000000"},
+        [],
+    )
+
+    assert [action.action_type for action in actions] == ["fill_text"]
+    assert actions[0].element_id == "field_phone"
+    assert actions[0].value == "0400000000"
 
 
 def test_fallback_fills_email_from_external_accounts_default() -> None:
@@ -220,6 +275,55 @@ def test_fallback_stops_at_submit_button() -> None:
     assert action.action_type == "stop_ready_to_submit"
     assert action.element_id == "button_submit"
     assert action.risk == "high"
+
+
+def test_fallback_clicks_apply_on_sparse_unknown_page() -> None:
+    observation = PageObservation(
+        url="https://ats.example/jobs/123",
+        page_type="unknown",
+        buttons=[
+            ObservedAction(element_id="button_signin", label="Sign In", kind="submit"),
+            ObservedAction(element_id="button_home", label="Home", kind="submit"),
+            ObservedAction(element_id="button_apply", label="Apply", kind="button"),
+            ObservedAction(element_id="button_readmore", label="Read More", kind="button"),
+        ],
+    )
+
+    action = fallback_proposed_action(observation, {}, [])
+
+    assert action.action_type == "click"
+    assert action.element_id == "button_apply"
+    assert action.source == "page"
+
+
+def test_fallback_clicks_create_account_link_when_it_is_the_best_cta() -> None:
+    observation = PageObservation(
+        url="https://ats.example/jobs/123/apply",
+        page_type="unknown",
+        links=[
+            ObservedAction(element_id="link_help", label="Forgot your password?", kind="link"),
+            ObservedAction(element_id="link_create", label="Create Account", kind="link"),
+        ],
+    )
+
+    action = fallback_proposed_action(observation, {}, [])
+
+    assert action.action_type == "click"
+    assert action.element_id == "link_create"
+    assert action.source == "page"
+
+
+def test_fallback_treats_apply_now_as_navigation_on_non_submit_page() -> None:
+    observation = PageObservation(
+        url="https://ats.example/jobs/123",
+        page_type="unknown",
+        buttons=[ObservedAction(element_id="button_apply_now", label="Apply Now", kind="button")],
+    )
+
+    action = fallback_proposed_action(observation, {}, [])
+
+    assert action.action_type == "click"
+    assert action.element_id == "button_apply_now"
 
 
 def test_prompt_includes_allowed_actions_and_observation() -> None:

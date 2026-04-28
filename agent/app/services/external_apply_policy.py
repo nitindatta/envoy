@@ -124,7 +124,12 @@ def validate_external_apply_action(
         )
 
     sensitive_hits = _sensitive_hits(target_text)
-    if sensitive_hits and not standard_privacy_consent and not configured_consent_default:
+    if (
+        sensitive_hits
+        and proposed_action.source not in {"memory", "user"}
+        and not standard_privacy_consent
+        and not configured_consent_default
+    ):
         return PolicyDecision(
             decision="paused",
             reason="The target appears to ask for sensitive or judgement-based information.",

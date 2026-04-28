@@ -174,7 +174,7 @@ def test_policy_pauses_low_confidence_action() -> None:
     assert decision.pause_reason == "low_confidence"
 
 
-def test_policy_pauses_sensitive_salary_field_even_with_profile_source() -> None:
+def test_policy_allows_sensitive_salary_field_from_approved_memory() -> None:
     observation = PageObservation(
         url="https://ats.example/apply",
         fields=[ObservedField(element_id="field_salary", label="Expected salary", field_type="text")],
@@ -187,6 +187,26 @@ def test_policy_pauses_sensitive_salary_field_even_with_profile_source() -> None
         risk="low",
         reason="Salary matched memory.",
         source="memory",
+    )
+
+    decision = validate_external_apply_action(observation=observation, proposed_action=action)
+
+    assert decision.decision == "allowed"
+
+
+def test_policy_pauses_sensitive_salary_field_from_profile_source() -> None:
+    observation = PageObservation(
+        url="https://ats.example/apply",
+        fields=[ObservedField(element_id="field_salary", label="Expected salary", field_type="text")],
+    )
+    action = ProposedAction(
+        action_type="fill_text",
+        element_id="field_salary",
+        value="150000",
+        confidence=0.95,
+        risk="low",
+        reason="Salary matched profile.",
+        source="profile",
     )
 
     decision = validate_external_apply_action(observation=observation, proposed_action=action)

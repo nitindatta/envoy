@@ -16,6 +16,10 @@ vi.mock('./externalApplyObserver.js', () => ({
   })),
 }));
 
+vi.mock('./snapshot.js', () => ({
+  saveSnapshot: vi.fn(async (_page: unknown, kind: string) => `C:/tmp/${kind}.artifact`),
+}));
+
 describe('external apply action helpers', () => {
   it('builds a safe data attribute selector for observed element ids', () => {
     expect(elementIdSelector('field_1')).toBe('[data-envoy-apply-id="field_1"]');
@@ -28,6 +32,587 @@ describe('external apply action helpers', () => {
     expect(truthyFormValue('checked')).toBe(true);
     expect(truthyFormValue('no')).toBe(false);
     expect(truthyFormValue(null)).toBe(false);
+  });
+
+  it('waits for live combobox options and falls back to the first usable source option', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'targetSelector' in value).length;
+        if (call <= 2) {
+          return null;
+        }
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Select One', value: '', disabled: true },
+            { text: 'Indeed', value: 'indeed', disabled: false },
+            { text: 'Jora', value: 'jora', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        if (call === 1) {
+          return true;
+        }
+        return 'Indeed';
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'indeed';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_19', value: 'SEEK' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(fill).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'indeed' }));
+  });
+
+  it('waits longer for slow button-backed combobox popups before failing', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+          tagName: 'button',
+          role: '',
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'targetSelector' in value).length;
+        if (call <= 25) {
+          return null;
+        }
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Select One', value: '', disabled: true },
+            { text: 'Indeed', value: 'indeed', disabled: false },
+            { text: 'Seek', value: 'seek', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'seek';
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        return call === 1 ? false : 'Seek';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_11', value: 'SEEK' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(fill).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'seek' }));
+  });
+
+  it('selects from an expanded button-backed combobox via its owned listbox', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+          tagName: 'button',
+          role: '',
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && arg.ownedOnly === true) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Select One', value: '', disabled: true },
+            { text: 'Australian Capital Territory', value: 'act', disabled: false },
+            { text: 'South Australia', value: '72de81fc3e6c414ebfbc8bb8f7a2c2c8', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        return null;
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        if (call === 1) {
+          return true;
+        }
+        return 'South Australia';
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'south australia';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_23', value: 'South Australia' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(fill).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ ownedOnly: true }));
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'south australia' }));
+  });
+
+  it('falls through to the owned listbox when a global listbox does not match', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+          tagName: 'button',
+          role: '',
+        })),
+    };
+    const unrelatedOptions = ['English', 'French'].map((text) => ({
+      textContent: vi.fn(async () => text),
+      click: vi.fn(async () => {}),
+    }));
+    const globalOptions = {
+      count: vi.fn(async () => unrelatedOptions.length),
+      nth: (index: number) => unrelatedOptions[index],
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && arg.ownedOnly === true) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Indeed', value: 'indeed', disabled: false },
+            { text: 'Seek', value: 'e5449715676d0127bb45880c1f4a6d39', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'seek';
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        return call === 1 ? false : 'Seek';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: (selector: string) => (selector.includes('[role="listbox"]') ? globalOptions : target),
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_19', value: 'Seek' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(focus).not.toHaveBeenCalled();
+    expect(unrelatedOptions[0]?.click).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ ownedOnly: true }));
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'seek' }));
+  });
+
+  it('recovers when a button-backed combobox owned listbox appears only in a late final pass', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+          tagName: 'button',
+          role: '',
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && arg.ownedOnly === true && arg.requireExpanded === false) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Select One', value: '', disabled: true },
+            { text: 'Indeed', value: 'indeed', disabled: false },
+            { text: 'Seek', value: 'e5449715676d0127bb45880c1f4a6d39', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        return null;
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        if (call === 1) {
+          return true;
+        }
+        return 'Seek';
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'seek';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_19', value: 'seek' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
+      ownedOnly: true,
+      requireExpanded: false,
+    }));
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'seek' }));
+  });
+
+  it('falls back to the first usable salutation option when the configured value is unavailable', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Select One', value: '', disabled: true },
+            { text: 'Mx', value: 'mx', disabled: false },
+            { text: 'Dr', value: 'dr', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        if (call === 1) {
+          return true;
+        }
+        return 'Mx';
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'mx';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_22', value: 'Mr' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(fill).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'mx' }));
+  });
+
+  it('matches strict state selects through shared aliases like South Australia and SA', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('cannot fill button combobox');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'ACT', value: 'act', disabled: false },
+            { text: 'SA', value: 'sa', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        const call = evaluate.mock.calls.filter(([, value]) => value && typeof value === 'object' && 'selector' in value).length;
+        if (call === 1) {
+          return true;
+        }
+        return 'SA';
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'sa';
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_23', value: 'South Australia' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(fill).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ wantText: 'sa' }));
+  });
+
+  it('does not type into button-backed comboboxes and fails strict selects when the chosen value does not stick', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('button-backed comboboxes should not be filled');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'Australian Capital Territory', value: 'act', disabled: false },
+            { text: 'South Australia', value: 'sa', disabled: false },
+          ],
+        };
+      }
+      if (arg && typeof arg === 'object' && 'wantText' in arg) {
+        return arg.wantText === 'south australia';
+      }
+      if (arg && typeof arg === 'object' && 'selector' in arg) {
+        return false;
+      }
+      return 'Australian Capital Territory';
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_22', value: 'South Australia' },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('did not stick');
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
+    expect(fill).not.toHaveBeenCalled();
+  });
+
+  it('captures artifacts and live combobox options when a select fails to match', async () => {
+    const click = vi.fn(async () => {});
+    const focus = vi.fn(async () => {});
+    const fill = vi.fn(async () => {
+      throw new Error('button-backed comboboxes should not be filled');
+    });
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      click,
+      focus,
+      fill,
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(async () => false)
+        .mockImplementationOnce(async () => ({
+          textEntryCapable: false,
+        })),
+    };
+
+    const evaluate = vi.fn(async (_fn: unknown, arg: any) => {
+      if (arg && typeof arg === 'object' && 'targetSelector' in arg) {
+        return {
+          selector: '[data-envoy-active-listbox="true"]',
+          options: [
+            { text: 'NSW', value: 'nsw', disabled: false },
+            { text: 'VIC', value: 'vic', disabled: false },
+          ],
+        };
+      }
+      return false;
+    });
+
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: () => target,
+      evaluate,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'select_option', element_id: 'field_22', value: 'South Australia' },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('No combobox option matching "South Australia"');
+    expect(result.artifacts).toEqual([
+      { type: 'screenshot', path: 'C:/tmp/screenshot.artifact' },
+      { type: 'dom', path: 'C:/tmp/dom.artifact' },
+    ]);
+    expect(result.diagnostics).toMatchObject({
+      requested_value: 'South Australia',
+      initial_options: ['NSW', 'VIC'],
+      text_entry_capable: false,
+    });
   });
 
   it('toggles custom aria checkboxes by clicking instead of calling native check', async () => {
@@ -111,6 +696,97 @@ describe('external apply action helpers', () => {
     expect(groupClick).not.toHaveBeenCalled();
   });
 
+  it('dismisses transient popovers before selecting the next radio option', async () => {
+    const radioCheck = vi.fn(async () => {});
+    const radioEntries = [
+      {
+        check: radioCheck,
+        evaluate: vi.fn(async () => ({ label: 'No', inputValue: 'false', inputId: 'dm287' })),
+      },
+    ];
+    const nativeRadios = {
+      count: vi.fn(async () => radioEntries.length),
+      nth: (index: number) => radioEntries[index],
+    };
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      evaluate: vi.fn(async () => ({ nativeCheckbox: false, ariaCheckbox: false, checked: false })),
+    };
+    const keyboard = { press: vi.fn(async () => {}) };
+    const mouse = { click: vi.fn(async () => {}) };
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: (selector: string) => {
+        if (selector.endsWith('input[type="radio"]')) return nativeRadios;
+        return target;
+      },
+      evaluate: vi
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false),
+      keyboard,
+      mouse,
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'set_radio', element_id: 'field_1', value: 'No' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(keyboard.press).toHaveBeenCalledWith('Escape');
+    expect(radioCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to clicking the associated label when native radio interaction is intercepted', async () => {
+    const radioCheck = vi.fn(async () => {
+      throw new Error('pointer events intercept the action');
+    });
+    const explicitLabelClick = vi.fn(async () => {});
+    const radioEntries = [
+      {
+        check: radioCheck,
+        evaluate: vi.fn(async () => ({ label: 'No', inputValue: 'false', inputId: 'dm287' })),
+      },
+    ];
+    const nativeRadios = {
+      count: vi.fn(async () => radioEntries.length),
+      nth: (index: number) => radioEntries[index],
+    };
+    const explicitLabel = {
+      first: () => explicitLabel,
+      count: vi.fn(async () => 1),
+      click: explicitLabelClick,
+    };
+    const target = {
+      first: () => target,
+      count: vi.fn(async () => 1),
+      evaluate: vi.fn(async () => ({ nativeCheckbox: false, ariaCheckbox: false, checked: false })),
+    };
+    const page = {
+      url: () => 'https://ats.example/apply',
+      locator: (selector: string) => {
+        if (selector.endsWith('input[type="radio"]')) return nativeRadios;
+        if (selector === 'label[for="dm287"]') return explicitLabel;
+        return target;
+      },
+      evaluate: vi.fn(async () => false),
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    const result = await executeExternalApplyAction(
+      page as never,
+      { action_type: 'set_radio', element_id: 'field_1', value: 'No' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(radioCheck).toHaveBeenCalledTimes(1);
+    expect(explicitLabelClick).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to setting hidden native checkboxes via DOM events when direct check fails', async () => {
     const click = vi.fn(async () => {});
     const check = vi.fn(async () => {
@@ -122,7 +798,8 @@ describe('external apply action helpers', () => {
         nativeCheckbox: true,
         ariaCheckbox: false,
         checked: false,
-      }))
+      })) as any;
+    evaluate
       .mockImplementationOnce(async () => ({
         nativeCheckbox: true,
         ariaCheckbox: false,
@@ -158,7 +835,7 @@ describe('external apply action helpers', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(check).toHaveBeenCalledTimes(1);
+    expect(check).toHaveBeenCalledTimes(2);
     expect(click).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,19 @@ ActionType = Literal[
 
 RiskLevel = Literal["low", "medium", "high"]
 ValueSource = Literal["profile", "memory", "user", "inferred", "page", "none"]
+ControlKind = Literal[
+    "native_text",
+    "native_select",
+    "native_checkbox",
+    "native_radio_group",
+    "aria_checkbox",
+    "aria_radio_group",
+    "aria_combobox",
+    "button_listbox",
+    "prompt_select",
+    "file_upload",
+    "unknown",
+]
 HarnessStatus = Literal[
     "running",
     "paused_for_user",
@@ -54,12 +67,15 @@ class ObservedField(BaseModel):
     element_id: str
     label: str
     field_type: str
+    control_kind: ControlKind | None = None
     required: bool = False
     current_value: str | None = None
     options: list[str] = Field(default_factory=list)
     nearby_text: str = ""
     disabled: bool = False
     visible: bool = True
+    invalid: bool = False
+    validation_message: str | None = None
 
 
 class ObservedAction(BaseModel):
@@ -102,6 +118,11 @@ class PolicyDecision(BaseModel):
     risk_flags: list[str] = Field(default_factory=list)
 
 
+class ActionArtifact(BaseModel):
+    type: str
+    path: str
+
+
 class ActionResult(BaseModel):
     ok: bool
     action_type: ActionType
@@ -111,6 +132,8 @@ class ActionResult(BaseModel):
     navigated: bool = False
     new_url: str | None = None
     errors: list[str] = Field(default_factory=list)
+    artifacts: list[ActionArtifact] = Field(default_factory=list)
+    diagnostics: dict[str, object] | None = None
 
 
 class ActionTrace(BaseModel):

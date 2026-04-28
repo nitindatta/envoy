@@ -53,7 +53,10 @@ describe('collectExternalApplyObservation', () => {
     expect(observation.page_type).toBe('resume_upload');
     expect(observation.fields.map((field) => field.label)).toContain('Full name *');
     expect(observation.fields.find((field) => field.label === 'Full name *')?.required).toBe(true);
+    expect(observation.fields.find((field) => field.label === 'Full name *')?.control_kind).toBe('native_text');
+    expect(observation.fields.find((field) => field.label === 'Country')?.control_kind).toBe('native_select');
     expect(observation.uploads).toHaveLength(1);
+    expect(observation.uploads[0]?.control_kind).toBe('file_upload');
     expect(observation.buttons[0]?.label).toBe('Continue');
     expect(observation.links[0]?.label).toBe('Privacy policy');
     expect(observation.errors).toContain('Email is required');
@@ -76,6 +79,7 @@ describe('collectExternalApplyObservation', () => {
     expect(observation.fields).toHaveLength(1);
     expect(observation.fields[0]?.label).toBe('Do you have working rights?');
     expect(observation.fields[0]?.field_type).toBe('radio');
+    expect(observation.fields[0]?.control_kind).toBe('native_radio_group');
     expect(observation.fields[0]?.options).toEqual(['Yes', 'No']);
   });
 
@@ -98,6 +102,7 @@ describe('collectExternalApplyObservation', () => {
     expect(observation.fields).toHaveLength(1);
     expect(observation.fields[0]?.label).toBe('Have you previously worked at SVHA?');
     expect(observation.fields[0]?.field_type).toBe('radio');
+    expect(observation.fields[0]?.control_kind).toBe('aria_radio_group');
     expect(observation.fields[0]?.options).toEqual(['Yes', 'No']);
     expect(observation.fields[0]?.current_value).toBe('No');
     expect(observation.fields[0]?.required).toBe(true);
@@ -132,9 +137,121 @@ describe('collectExternalApplyObservation', () => {
     expect(observation.fields).toHaveLength(1);
     expect(observation.fields[0]?.label).toBe('Phone Device Type');
     expect(observation.fields[0]?.field_type).toBe('select');
+    expect(observation.fields[0]?.control_kind).toBe('aria_combobox');
     expect(observation.fields[0]?.options).toEqual(['Mobile', 'Home', 'Work']);
     expect(observation.fields[0]?.current_value).toBe('Mobile');
     expect(observation.fields[0]?.required).toBe(true);
+  });
+
+  it('observes button-based listbox controls as select fields', () => {
+    const observation = withDom(
+      `
+      <html>
+        <body>
+          <div data-automation-id="formField-source">
+            <label for="source--source">How Did You Hear About Us?*</label>
+            <button
+              id="source--source"
+              name="source"
+              type="button"
+              aria-haspopup="listbox"
+              aria-controls="source-options"
+              aria-label="How Did You Hear About Us? Select One Required"
+            >
+              Select One
+            </button>
+            <ul id="source-options" role="listbox">
+              <li role="option" aria-disabled="true">Select One</li>
+              <li role="option">Indeed</li>
+              <li role="option">Seek</li>
+            </ul>
+          </div>
+        </body>
+      </html>
+      `,
+      () => collectExternalApplyObservation(),
+    );
+
+    expect(observation.fields).toHaveLength(1);
+    expect(observation.fields[0]?.label).toBe('How Did You Hear About Us?*');
+    expect(observation.fields[0]?.field_type).toBe('select');
+    expect(observation.fields[0]?.control_kind).toBe('button_listbox');
+    expect(observation.fields[0]?.required).toBe(true);
+    expect(observation.fields[0]?.current_value).toBeNull();
+    expect(observation.fields[0]?.options).toEqual(['Select One', 'Indeed', 'Seek']);
+    expect(observation.buttons).toHaveLength(0);
+  });
+
+  it('marks invalid fields even when they already have values', () => {
+    const observation = withDom(
+      `
+      <html>
+        <body>
+          <form>
+            <label for="postcode">Postcode *</label>
+            <input
+              id="postcode"
+              name="postcode"
+              required
+              value="abc"
+              aria-invalid="true"
+              aria-errormessage="postcode-error"
+            />
+            <div id="postcode-error">Enter a valid postcode.</div>
+            <button disabled>Save and Continue</button>
+          </form>
+        </body>
+      </html>
+      `,
+      () => collectExternalApplyObservation(),
+    );
+
+    expect(observation.fields).toHaveLength(1);
+    expect(observation.fields[0]?.current_value).toBe('abc');
+    expect(observation.fields[0]?.invalid).toBe(true);
+    expect(observation.fields[0]?.validation_message).toBe('Enter a valid postcode.');
+    expect(observation.errors).toContain('Enter a valid postcode.');
+    expect(observation.buttons[0]?.disabled).toBe(true);
+  });
+
+  it('observes selected-item prompt widgets as select fields with current value', () => {
+    const observation = withDom(
+      `
+      <html>
+        <body>
+          <div data-automation-id="formField-countryPhoneCode">
+            <label for="phoneNumber--countryPhoneCode">Country Phone Code*</label>
+            <div data-automation-id="multiSelectContainer">
+              <div data-automation-id="multiselectInputContainer">
+                <input
+                  id="phoneNumber--countryPhoneCode"
+                  aria-required="true"
+                  data-uxi-widget-type="selectinput"
+                  value=""
+                />
+                <div id="phone-hint">1 item selected, Australia (+61)</div>
+              </div>
+              <ul role="listbox" data-automation-id="selectedItemList">
+                <li role="presentation">
+                  <div role="option" aria-selected="false" title="Australia (+61)">
+                    <p data-automation-id="promptOption">Australia (+61)</p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </body>
+      </html>
+      `,
+      () => collectExternalApplyObservation(),
+    );
+
+    expect(observation.fields).toHaveLength(1);
+    expect(observation.fields[0]?.label).toBe('Country Phone Code*');
+    expect(observation.fields[0]?.field_type).toBe('select');
+    expect(observation.fields[0]?.control_kind).toBe('prompt_select');
+    expect(observation.fields[0]?.required).toBe(true);
+    expect(observation.fields[0]?.current_value).toBe('Australia (+61)');
   });
 
   it('filters accessibility skip and jump-menu actions from observed buttons and links', () => {
@@ -180,6 +297,7 @@ describe('collectExternalApplyObservation', () => {
 
     expect(observation.fields).toHaveLength(1);
     expect(observation.fields[0]?.field_type).toBe('checkbox');
+    expect(observation.fields[0]?.control_kind).toBe('aria_checkbox');
     expect(observation.fields[0]?.label).toBe('I agree to the Terms and Conditions');
     expect(observation.fields[0]?.required).toBe(true);
   });
@@ -207,6 +325,7 @@ describe('collectExternalApplyObservation', () => {
 
     expect(observation.fields).toHaveLength(1);
     expect(observation.fields[0]?.field_type).toBe('checkbox');
+    expect(observation.fields[0]?.control_kind).toBe('native_checkbox');
     expect(observation.fields[0]?.label).toBe('I agree to the Terms and Conditions');
   });
 
